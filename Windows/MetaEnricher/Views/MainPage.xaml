@@ -95,8 +95,7 @@
                             <Border
                                 Width="48" Height="48"
                                 CornerRadius="6"
-                                Background="#2D2D2D"
-                                ClipToBounds="True">
+                                Background="#2D2D2D">
                                 <Image
                                     x:Name="SessionThumb"
                                     Stretch="UniformToFill" />
@@ -232,7 +231,7 @@
                     HorizontalAlignment="Center"
                     VerticalAlignment="Center"
                     Spacing="16"
-                    ZIndex="10">
+                    Canvas.ZIndex="10">
                     <ProgressRing IsActive="True" Width="48" Height="48" Foreground="{StaticResource AmberBrush}" />
                     <TextBlock Text="Loading photos..." Foreground="#9CA3AF" />
                 </StackPanel>
@@ -282,7 +281,7 @@
                                         </Grid.RowDefinitions>
 
                                         <!-- Thumbnail -->
-                                        <Border CornerRadius="6,6,0,0" ClipToBounds="True" MinHeight="100">
+                                        <Border CornerRadius="6,6,0,0" MinHeight="100">
                                             <Image
                                                 x:Name="PhotoThumb"
                                                 Stretch="UniformToFill"
@@ -351,7 +350,6 @@
                     <Border
                         MaxHeight="220"
                         CornerRadius="6"
-                        ClipToBounds="True"
                         Background="#242424">
                         <Image
                             x:Name="PreviewImage"
