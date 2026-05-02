@@ -280,12 +280,12 @@
                                             <RowDefinition Height="Auto" />
                                         </Grid.RowDefinitions>
 
-                                        <!-- Thumbnail -->
+                                        <!-- Thumbnail: bound to Photo.ThumbnailSource (set in code-behind,
+                                             avoids ItemsRepeater container-recycling race) -->
                                         <Border CornerRadius="6,6,0,0" MinHeight="100">
                                             <Image
-                                                x:Name="PhotoThumb"
-                                                Stretch="UniformToFill"
-                                                Tag="{x:Bind FilePath}" />
+                                                Source="{x:Bind ThumbnailSource, Mode=OneWay}"
+                                                Stretch="UniformToFill" />
                                         </Border>
 
                                         <!-- Enrichment badge -->

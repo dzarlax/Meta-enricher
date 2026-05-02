@@ -1,4 +1,6 @@
 using System.Collections.Generic;
+using CommunityToolkit.Mvvm.ComponentModel;
+using Microsoft.UI.Xaml.Media;
 
 namespace MetaEnricher.Models;
 
@@ -42,7 +44,7 @@ public class PhotoMeta
     public double? GpsLon { get; set; }
 }
 
-public class Photo
+public partial class Photo : ObservableObject
 {
     public string Id { get; init; } = "";
     public string FilePath { get; init; } = "";
@@ -50,6 +52,10 @@ public class Photo
     public bool IsEnriched => Meta.Title != null && Meta.Description != null;
     public bool HasPartialMeta => Meta.Title != null || Meta.Keywords.Count > 0;
     public string FileName => System.IO.Path.GetFileName(FilePath);
+
+    // Bound directly in ItemsRepeater DataTemplate — avoids TryGetElement(index) race.
+    [ObservableProperty]
+    private ImageSource? _thumbnailSource;
 }
 
 public class MetaWrite

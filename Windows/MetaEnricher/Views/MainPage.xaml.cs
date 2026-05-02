@@ -57,7 +57,7 @@ public sealed partial class MainPage : Page
             if (e.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Reset ||
                 e.NewItems?.Count > 0)
             {
-                LoadThumbnails();
+                AssignThumbnails();
             }
         });
     }
@@ -69,36 +69,18 @@ public sealed partial class MainPage : Page
         EmptyState.Visibility = (!hasPhotos && !isLoading) ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private async void LoadThumbnails()
+    /// <summary>
+    /// Assigns a BitmapImage to each Photo.ThumbnailSource on the UI thread.
+    /// BitmapImage starts loading the file asynchronously in the background by itself —
+    /// no awaiting needed, and no TryGetElement index races.
+    /// </summary>
+    private void AssignThumbnails()
     {
-        // Thumbnails are loaded lazily — iterate over the repeater
-        // In practice, we use a workaround: bind Image.Source in code-behind after ItemsRepeater renders
-        await Task.Delay(100); // Allow repeater to render
-        await LoadVisibleThumbnails();
-    }
-
-    private async Task LoadVisibleThumbnails()
-    {
-        var thumbSize = (int)ZoomSlider.Value;
-        var snapshot = AppState.Photos.ToList();
-        for (int i = 0; i < snapshot.Count; i++)
+        var size = (int)ZoomSlider.Value;
+        foreach (var photo in AppState.Photos)
         {
-            var photo = snapshot[i];
-            var capturedIndex = i;
-            var thumb = await ThumbnailService.Instance.GetThumbnailAsync(photo.FilePath, thumbSize);
-            if (thumb != null)
-            {
-                DispatcherQueue.TryEnqueue(() =>
-                {
-                    var container = PhotosRepeater.TryGetElement(capturedIndex);
-                    if (container is Border border)
-                    {
-                        var grid = border.Child as Grid;
-                        if (grid?.Children[0] is Border thumbBorder && thumbBorder.Child is Image img)
-                            img.Source = thumb;
-                    }
-                });
-            }
+            if (photo.ThumbnailSource == null)
+                photo.ThumbnailSource = ThumbnailService.Instance.GetThumbnail(photo.FilePath, size);
         }
     }
 
@@ -222,7 +204,11 @@ public sealed partial class MainPage : Page
             PhotoGrid.MinItemWidth = val;
             PhotoGrid.MinItemHeight = val;
         }
-        _ = LoadVisibleThumbnails();
+        // Clear cached thumbnails so they re-decode at new size
+        ThumbnailService.Instance.PurgeAll();
+        foreach (var photo in AppState.Photos)
+            photo.ThumbnailSource = null;
+        AssignThumbnails();
     }
 
     private void TbSessionNotes_TextChanged(object sender, TextChangedEventArgs e)
