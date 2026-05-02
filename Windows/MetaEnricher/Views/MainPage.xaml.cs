@@ -17,7 +17,6 @@ public sealed partial class MainPage : Page
 {
     public AppState AppState => AppState.Instance;
     private int _currentRating = 0;
-    private bool _suppressPhotoFormUpdate = false;
 
     public MainPage()
     {
@@ -40,7 +39,7 @@ public sealed partial class MainPage : Page
             switch (e.PropertyName)
             {
                 case nameof(AppState.SelectedPhoto):
-                    _ = UpdateInspectorAsync();
+                    UpdateInspector();
                     break;
                 case nameof(AppState.IsLoadingPhotos):
                     UpdateEmptyState();
@@ -84,7 +83,7 @@ public sealed partial class MainPage : Page
         }
     }
 
-    private async Task UpdateInspectorAsync()
+    private void UpdateInspector()
     {
         var photo = AppState.SelectedPhoto;
         if (photo == null)
@@ -94,33 +93,22 @@ public sealed partial class MainPage : Page
             return;
         }
 
-        _suppressPhotoFormUpdate = true;
         PopulateForm(photo);
-        _suppressPhotoFormUpdate = false;
 
-        // Load preview (ThumbnailService does its own async I/O)
-        var thumb = await ThumbnailService.Instance.GetThumbnailAsync(photo.FilePath, 280);
+        // BitmapImage starts loading asynchronously in the background on its own.
+        PreviewImage.Source = ThumbnailService.Instance.GetThumbnail(photo.FilePath, 280);
 
-        // All UI updates must happen on the UI thread
-        DispatcherQueue.TryEnqueue(() =>
-        {
-            if (AppState.SelectedPhoto?.Id != photo.Id) return;
-
-            PreviewImage.Source = thumb;
-
-            // Camera info labels
-            var m = photo.Meta;
-            LblDate.Text = m.DateTimeOriginal ?? "—";
-            LblCamera.Text = (m.Make != null || m.Model != null)
-                ? $"{m.Make} {m.Model}".Trim() : "—";
-            LblFocal.Text = m.FocalLength ?? "—";
-            LblAperture.Text = m.Aperture ?? "—";
-            LblShutter.Text = m.ShutterSpeed ?? "—";
-            LblIso.Text = m.Iso?.ToString() ?? "—";
-            LblGps.Text = m.GpsLat.HasValue && m.GpsLon.HasValue
-                ? $"{m.GpsLat.Value:F4}, {m.GpsLon.Value:F4}" : "—";
-            LblLocationSrc.Text = m.LocationSource ?? "—";
-        });
+        var m = photo.Meta;
+        LblDate.Text = m.DateTimeOriginal ?? "—";
+        LblCamera.Text = (m.Make != null || m.Model != null)
+            ? $"{m.Make} {m.Model}".Trim() : "—";
+        LblFocal.Text = m.FocalLength ?? "—";
+        LblAperture.Text = m.Aperture ?? "—";
+        LblShutter.Text = m.ShutterSpeed ?? "—";
+        LblIso.Text = m.Iso?.ToString() ?? "—";
+        LblGps.Text = m.GpsLat.HasValue && m.GpsLon.HasValue
+            ? $"{m.GpsLat.Value:F4}, {m.GpsLon.Value:F4}" : "—";
+        LblLocationSrc.Text = m.LocationSource ?? "—";
     }
 
     private void PopulateForm(Photo photo)
@@ -401,7 +389,7 @@ public sealed partial class MainPage : Page
                     {
                         AppState.UpdatePhoto(photo);
                         if (AppState.SelectedPhoto?.Id == photo.Id)
-                            _ = UpdateInspectorAsync();
+                            UpdateInspector();
                     });
                 }
                 catch (Exception ex)
