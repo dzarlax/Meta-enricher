@@ -264,8 +264,11 @@ public class ExifService
 
     private string? FindExifTool()
     {
-        // 1. Next to the .exe (bundled with the app — preferred)
-        var appDir = Path.GetDirectoryName(Environment.ProcessPath) ?? "";
+        // 1. Next to the .exe (bundled with the app — preferred).
+        // Use AppContext.BaseDirectory so single-file self-extract apps resolve
+        // to the extracted temp dir (where the bundled exiftool actually lives),
+        // not to the launcher .exe path.
+        var appDir = AppContext.BaseDirectory;
         var local = Path.Combine(appDir, "exiftool.exe");
         if (File.Exists(local)) return local;
 
@@ -286,7 +289,7 @@ public class ExifService
 
     private static string ExifToolMissingMessage()
     {
-        var appDir = Path.GetDirectoryName(Environment.ProcessPath) ?? "(app dir)";
+        var appDir = AppContext.BaseDirectory;
         return $"exiftool.exe not found.\n\n" +
                $"Download the Windows standalone executable from https://exiftool.org, " +
                $"rename it from \"exiftool(-k).exe\" to \"exiftool.exe\", " +
