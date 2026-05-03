@@ -44,15 +44,21 @@ jobs:
           Remove-Item exiftool.zip, exiftool_tmp -Recurse -Force
 
       # ── Portable build ────────────────────────────────────────────────────────
+      # Use msbuild (not dotnet publish) — WindowsAppSDK PriGen targets need
+      # Microsoft.Build.Packaging.Pri.Tasks.dll which only ships with VS MSBuild.
       - name: Build Portable (x64)
         shell: pwsh
         run: |
-          dotnet publish Windows/MetaEnricher/MetaEnricher.csproj `
-            -c Release -r win-x64 --self-contained `
+          msbuild Windows/MetaEnricher/MetaEnricher.csproj `
+            -t:Publish `
+            -p:Configuration=Release `
+            -p:Platform=x64 `
+            -p:RuntimeIdentifier=win-x64 `
+            -p:SelfContained=true `
             -p:WindowsPackageType=None `
             -p:WindowsAppSDKSelfContained=true `
             -p:GenerateAppxPackageOnBuild=false `
-            -p:PublishDir=publish-portable
+            -p:PublishDir=publish-portable\
 
       - name: Zip Portable
         shell: pwsh
