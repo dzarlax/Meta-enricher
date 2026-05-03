@@ -26,14 +26,14 @@
     <UapAppxPackageBuildMode Condition="'$(Configuration)' == 'Release'">StoreUpload</UapAppxPackageBuildMode>
     <!-- Portable distribution: drop non-English satellite resources, then bundle
          everything (managed + native + content) into a single self-extracting .exe.
-         WindowsAppSDK requires IncludeAllContentForSelfExtract=true and
-         EnableMsixTooling=true with PublishSingleFile, otherwise it errors out. -->
+         WindowsAppSDK only allows single-file for unpackaged builds (WindowsPackageType=None);
+         MSIX path keeps the default multi-file layout. -->
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
-    <PublishSingleFile Condition="'$(Configuration)' == 'Release'">true</PublishSingleFile>
-    <IncludeNativeLibrariesForSelfExtract Condition="'$(Configuration)' == 'Release'">true</IncludeNativeLibrariesForSelfExtract>
-    <IncludeAllContentForSelfExtract Condition="'$(Configuration)' == 'Release'">true</IncludeAllContentForSelfExtract>
-    <EnableCompressionInSingleFile Condition="'$(Configuration)' == 'Release'">true</EnableCompressionInSingleFile>
-    <EnableMsixTooling Condition="'$(Configuration)' == 'Release'">true</EnableMsixTooling>
+    <PublishSingleFile Condition="'$(Configuration)' == 'Release' AND '$(WindowsPackageType)' == 'None'">true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract Condition="'$(Configuration)' == 'Release' AND '$(WindowsPackageType)' == 'None'">true</IncludeNativeLibrariesForSelfExtract>
+    <IncludeAllContentForSelfExtract Condition="'$(Configuration)' == 'Release' AND '$(WindowsPackageType)' == 'None'">true</IncludeAllContentForSelfExtract>
+    <EnableCompressionInSingleFile Condition="'$(Configuration)' == 'Release' AND '$(WindowsPackageType)' == 'None'">true</EnableCompressionInSingleFile>
+    <EnableMsixTooling Condition="'$(Configuration)' == 'Release' AND '$(WindowsPackageType)' == 'None'">true</EnableMsixTooling>
   </PropertyGroup>
   <!-- exiftool.exe must be placed next to this .csproj file.
        Download the Windows standalone from https://exiftool.org
