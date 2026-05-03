@@ -32,10 +32,15 @@ jobs:
         shell: pwsh
         run: |
           $ver = (Invoke-WebRequest "https://exiftool.org/ver.txt").Content.Trim()
-          Invoke-WebRequest "https://exiftool.org/exiftool-$ver.zip" -OutFile exiftool.zip
+          Invoke-WebRequest "https://exiftool.org/exiftool-${ver}_64.zip" -OutFile exiftool.zip
           Expand-Archive exiftool.zip -DestinationPath exiftool_tmp
-          $exe = Get-ChildItem exiftool_tmp -Filter "*.exe" | Select-Object -First 1
+          # 64-bit distribution: exiftool(-k).exe + exiftool_files/ folder (Perl modules)
+          $exe = Get-ChildItem exiftool_tmp -Filter "*.exe" -Recurse | Select-Object -First 1
           Copy-Item $exe.FullName Windows/MetaEnricher/exiftool.exe
+          $filesDir = Get-ChildItem $exe.Directory -Filter "exiftool_files" -Directory -ErrorAction SilentlyContinue
+          if ($filesDir) {
+            Copy-Item $filesDir.FullName Windows/MetaEnricher/exiftool_files -Recurse -Force
+          }
           Remove-Item exiftool.zip, exiftool_tmp -Recurse -Force
 
       # ── Portable build ────────────────────────────────────────────────────────
