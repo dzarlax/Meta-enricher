@@ -161,7 +161,7 @@ public sealed partial class ImportDialog : ContentDialog
 
         try
         {
-            await ImportService.Instance.ImportAsync(_newFiles, progress, _cts.Token);
+            await ImportService.Instance.ImportAsync(_newFiles, progress, AppState.PicksFolderName, _cts.Token);
         }
         catch (OperationCanceledException)
         {

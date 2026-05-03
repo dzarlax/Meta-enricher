@@ -52,6 +52,13 @@ public class PhotoScanner
                     // Only include sessions that have at least some images
                     if (editedCount == 0 && originalsCount == 0 && rawCount == 0) continue;
 
+                    // Ensure picks folder exists so the user can drop edited JPEGs there.
+                    // Failures (read-only volume, permission) are non-fatal.
+                    if (!Directory.Exists(editedPath))
+                    {
+                        try { Directory.CreateDirectory(editedPath); } catch { }
+                    }
+
                     var firstPhoto = GetFirstPhoto(editedPath) ?? GetFirstPhoto(jpegPath);
 
                     var session = new PhotoSession

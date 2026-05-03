@@ -82,6 +82,7 @@ public class ImportService
     public async Task ImportAsync(
         IList<ImportItem> items,
         IProgress<ImportProgress> progress,
+        string picksFolderName = AppConstants.DefaultPicksFolder,
         CancellationToken ct = default)
     {
         await Task.Run(() =>
@@ -105,6 +106,18 @@ public class ImportService
                 {
                     progress.Report(new ImportProgress(total, copied, item.FileName, false, ex.Message));
                 }
+            }
+
+            // Pre-create the picks folder for every date dir that received files,
+            // so the user has somewhere to drop edited JPEGs without manual mkdir.
+            var dateDirs = items
+                .Select(i => Path.GetDirectoryName(Path.GetDirectoryName(i.DestPath)))
+                .Where(d => !string.IsNullOrEmpty(d))
+                .Distinct()
+                .ToList();
+            foreach (var dateDir in dateDirs)
+            {
+                try { Directory.CreateDirectory(Path.Combine(dateDir!, picksFolderName)); } catch { }
             }
 
             progress.Report(new ImportProgress(total, copied, "", true, null));
