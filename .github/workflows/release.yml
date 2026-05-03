@@ -44,31 +44,24 @@ jobs:
           Remove-Item exiftool.zip, exiftool_tmp -Recurse -Force
 
       # ── Portable build ────────────────────────────────────────────────────────
-      # Use msbuild Build (not Publish) — Publish target skips WinUI XAML compilation.
-      # Self-contained .exe + WinAppSDK runtime via WindowsPackageType=None.
+      # global.json pins .NET 9 SDK (v17.0 paths). dotnet publish runs the
+      # WinUI XAML compiler properly and the PriGen task DLL is present in 9.x.
       - name: Build Portable (x64)
         shell: pwsh
         run: |
-          msbuild Windows/MetaEnricher/MetaEnricher.csproj `
-            -t:Restore,Build `
-            -p:Configuration=Release `
+          dotnet publish Windows/MetaEnricher/MetaEnricher.csproj `
+            -c Release -r win-x64 --self-contained `
             -p:Platform=x64 `
-            -p:RuntimeIdentifier=win-x64 `
-            -p:SelfContained=true `
             -p:WindowsPackageType=None `
             -p:WindowsAppSDKSelfContained=true `
-            -p:GenerateAppxPackageOnBuild=false
+            -p:GenerateAppxPackageOnBuild=false `
+            -p:PublishDir=publish-portable\
 
       - name: Zip Portable
         shell: pwsh
         run: |
-          $portableDir = "Windows/MetaEnricher/bin/x64/Release/net9.0-windows10.0.22621.0/win-x64"
-          if (-not (Test-Path $portableDir)) {
-            $portableDir = "Windows/MetaEnricher/bin/x64/Release/net9.0-windows10.0.22621.0"
-          }
-          Write-Host "Packaging from: $portableDir"
           Compress-Archive `
-            -Path "$portableDir/*" `
+            -Path Windows/MetaEnricher/publish-portable/* `
             -DestinationPath MetaEnricher-${{ github.ref_name }}-portable-x64.zip
 
       # ── MSIX build ────────────────────────────────────────────────────────────
