@@ -47,6 +47,20 @@
     </Content>
   </ItemGroup>
 
+  <!-- Workaround: dotnet publish doesn't auto-include the WinUI MakePri output.
+       Without resources.pri/MetaEnricher.pri in the publish folder, the app
+       crashes at startup when XAML tries to load App.xaml resources
+       (Microsoft.UI.Xaml.dll + STATUS_STOWED_EXCEPTION 0xC000027B). -->
+  <Target Name="IncludeAppPriInPublish" AfterTargets="ComputeFilesToPublish">
+    <ItemGroup>
+      <ResolvedFileToPublish Include="$(OutputPath)$(AssemblyName).pri"
+                             Condition="Exists('$(OutputPath)$(AssemblyName).pri')">
+        <RelativePath>$(AssemblyName).pri</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250228001" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.1742" PrivateAssets="all" />

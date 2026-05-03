@@ -8,6 +8,7 @@ release/
 # Windows app build artifacts
 **/bin/
 **/obj/
+**/publish-portable/
 *.csproj.user
 *.wapproj.user
 *.assets.cache
