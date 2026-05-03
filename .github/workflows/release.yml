@@ -44,27 +44,31 @@ jobs:
           Remove-Item exiftool.zip, exiftool_tmp -Recurse -Force
 
       # ── Portable build ────────────────────────────────────────────────────────
-      # Use msbuild (not dotnet publish) — WindowsAppSDK PriGen targets need
-      # Microsoft.Build.Packaging.Pri.Tasks.dll which only ships with VS MSBuild.
+      # Use msbuild Build (not Publish) — Publish target skips WinUI XAML compilation.
+      # Self-contained .exe + WinAppSDK runtime via WindowsPackageType=None.
       - name: Build Portable (x64)
         shell: pwsh
         run: |
           msbuild Windows/MetaEnricher/MetaEnricher.csproj `
-            -t:Restore,Build,Publish `
+            -t:Restore,Build `
             -p:Configuration=Release `
             -p:Platform=x64 `
             -p:RuntimeIdentifier=win-x64 `
             -p:SelfContained=true `
             -p:WindowsPackageType=None `
             -p:WindowsAppSDKSelfContained=true `
-            -p:GenerateAppxPackageOnBuild=false `
-            -p:PublishDir=publish-portable\
+            -p:GenerateAppxPackageOnBuild=false
 
       - name: Zip Portable
         shell: pwsh
         run: |
+          $portableDir = "Windows/MetaEnricher/bin/x64/Release/net9.0-windows10.0.22621.0/win-x64"
+          if (-not (Test-Path $portableDir)) {
+            $portableDir = "Windows/MetaEnricher/bin/x64/Release/net9.0-windows10.0.22621.0"
+          }
+          Write-Host "Packaging from: $portableDir"
           Compress-Archive `
-            -Path Windows/MetaEnricher/publish-portable/* `
+            -Path "$portableDir/*" `
             -DestinationPath MetaEnricher-${{ github.ref_name }}-portable-x64.zip
 
       # ── MSIX build ────────────────────────────────────────────────────────────
