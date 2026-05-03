@@ -124,3 +124,23 @@ public class DoubleToGridLengthConverter : IValueConverter
         return 120.0;
     }
 }
+
+public class BoolNegationConverter : IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, string language)
+        => value is bool b ? !b : true;
+    public object ConvertBack(object value, Type targetType, object parameter, string language)
+        => value is bool b ? !b : false;
+}
+
+public class SelectedToBorderBrushConverter : IValueConverter
+{
+    private static readonly SolidColorBrush Amber = new(Color.FromArgb(255, 255, 185, 56));
+    private static readonly SolidColorBrush Transparent = new(Color.FromArgb(0, 0, 0, 0));
+
+    public object Convert(object value, Type targetType, object parameter, string language)
+        => value is bool b && b ? Amber : Transparent;
+
+    public object ConvertBack(object value, Type targetType, object parameter, string language)
+        => throw new NotImplementedException();
+}

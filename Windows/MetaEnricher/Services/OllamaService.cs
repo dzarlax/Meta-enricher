@@ -30,26 +30,38 @@ public class OllamaService
 
     public OllamaService()
     {
-        _http = new HttpClient { Timeout = TimeSpan.FromSeconds(300) };
+        _http = new HttpClient { Timeout = TimeSpan.FromSeconds(AppConstants.OllamaRequestTimeoutSec) };
         _http.DefaultRequestHeaders.Add("User-Agent", "MetaEnricher/1.0");
     }
 
-    public async Task<bool> CheckOllamaAsync(string baseUrl)
+    private void ApplyAuth(System.Net.Http.Headers.HttpRequestHeaders headers, string apiKey)
+    {
+        headers.Remove("Authorization");
+        if (!string.IsNullOrWhiteSpace(apiKey))
+            headers.Add("Authorization", $"Bearer {apiKey}");
+    }
+
+    public async Task<bool> CheckOllamaAsync(string baseUrl, string apiKey = "")
     {
         try
         {
-            var resp = await _http.GetAsync($"{baseUrl.TrimEnd('/')}/api/tags");
+            var req = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl.TrimEnd('/')}/api/tags");
+            ApplyAuth(req.Headers, apiKey);
+            var resp = await _http.SendAsync(req);
             return resp.IsSuccessStatusCode;
         }
         catch { return false; }
     }
 
-    public async Task<List<string>> ListModelsAsync(string baseUrl)
+    public async Task<List<string>> ListModelsAsync(string baseUrl, string apiKey = "")
     {
         try
         {
-            var resp = await _http.GetStringAsync($"{baseUrl.TrimEnd('/')}/api/tags");
-            using var doc = JsonDocument.Parse(resp);
+            var req = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl.TrimEnd('/')}/api/tags");
+            ApplyAuth(req.Headers, apiKey);
+            var resp = await _http.SendAsync(req);
+            var respStr = await resp.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(respStr);
             var models = new List<string>();
             if (doc.RootElement.TryGetProperty("models", out var arr))
             {
@@ -65,12 +77,32 @@ public class OllamaService
         catch { return new List<string>(); }
     }
 
-    public async Task PullModelAsync(string name, string baseUrl, IProgress<PullProgress> progress)
+    public async Task<bool> UnloadModelAsync(string model, string baseUrl, string apiKey)
+    {
+        try
+        {
+            var body = JsonSerializer.Serialize(new { model, keep_alive = 0 });
+            var req = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl.TrimEnd('/')}/api/generate")
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json")
+            };
+            ApplyAuth(req.Headers, apiKey);
+            var resp = await _http.SendAsync(req);
+            return resp.IsSuccessStatusCode;
+        }
+        catch { return false; }
+    }
+
+    public async Task PullModelAsync(string name, string baseUrl, string apiKey, IProgress<PullProgress> progress)
     {
         var body = JsonSerializer.Serialize(new { name, stream = true });
-        var content = new StringContent(body, Encoding.UTF8, "application/json");
+        var req = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl.TrimEnd('/')}/api/pull")
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json")
+        };
+        ApplyAuth(req.Headers, apiKey);
 
-        using var resp = await _http.PostAsync($"{baseUrl.TrimEnd('/')}/api/pull", content);
+        using var resp = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead);
         resp.EnsureSuccessStatusCode();
 
         using var stream = await resp.Content.ReadAsStreamAsync();
@@ -97,10 +129,16 @@ public class OllamaService
         string imagePath,
         string baseUrl,
         string model,
+        string apiKey,
         string sessionNotes,
         PhotoMeta existingMeta,
         HashSet<EnrichField> fields)
     {
+        if (string.IsNullOrWhiteSpace(model))
+            throw new ArgumentException("Ollama model is not configured. Open Settings and select a model.", nameof(model));
+        if (string.IsNullOrWhiteSpace(baseUrl))
+            throw new ArgumentException("Ollama URL is not configured.", nameof(baseUrl));
+
         // Resize and encode image
         var imageBytes = await ResizeAndEncodeAsync(imagePath, 1280);
         var base64 = Convert.ToBase64String(imageBytes);
@@ -120,15 +158,26 @@ public class OllamaService
         };
 
         var json = JsonSerializer.Serialize(requestBody);
-        var httpContent = new StringContent(json, Encoding.UTF8, "application/json");
-
-        using var cts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(120));
-        var resp = await _http.PostAsync($"{baseUrl.TrimEnd('/')}/api/generate", httpContent, cts.Token);
+        using var cts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(AppConstants.OllamaInferenceTimeoutSec));
+        var req = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl.TrimEnd('/')}/api/generate")
+        {
+            Content = new StringContent(json, Encoding.UTF8, "application/json")
+        };
+        ApplyAuth(req.Headers, apiKey);
+        var resp = await _http.SendAsync(req, cts.Token);
         resp.EnsureSuccessStatusCode();
 
         var responseText = await resp.Content.ReadAsStringAsync();
+        System.Diagnostics.Debug.WriteLine($"[Ollama] Full API response ({responseText.Length} chars): {responseText.Substring(0, Math.Min(800, responseText.Length))}");
         using var doc = JsonDocument.Parse(responseText);
         var responseContent = doc.RootElement.TryGetProperty("response", out var r) ? r.GetString() ?? "" : "";
+
+        // qwen3-vl and other thinking models put the JSON in "thinking" when response is empty
+        if (string.IsNullOrWhiteSpace(responseContent) &&
+            doc.RootElement.TryGetProperty("thinking", out var t))
+            responseContent = t.GetString() ?? "";
+
+        System.Diagnostics.Debug.WriteLine($"[Ollama] Extracted content ({responseContent.Length} chars): {responseContent.Substring(0, Math.Min(500, responseContent.Length))}");
 
         return ParseResponse(responseContent, existingMeta, fields);
     }
@@ -243,7 +292,11 @@ public class OllamaService
                 }
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Ollama] ParseResponse failed: {ex.Message}");
+            System.Diagnostics.Debug.WriteLine($"[Ollama] Attempted to parse: {responseText.Substring(0, Math.Min(300, responseText.Length))}");
+        }
 
         return meta;
     }
@@ -259,33 +312,28 @@ public class OllamaService
             using var stream = await file.OpenReadAsync();
             var decoder = await BitmapDecoder.CreateAsync(stream);
 
-            uint origW = decoder.PixelWidth;
-            uint origH = decoder.PixelHeight;
-
-            double scale = Math.Min((double)maxSize / origW, (double)maxSize / origH);
+            double scale = Math.Min((double)maxSize / decoder.PixelWidth, (double)maxSize / decoder.PixelHeight);
             if (scale > 1) scale = 1;
-
-            uint newW = (uint)(origW * scale);
-            uint newH = (uint)(origH * scale);
 
             var transform = new BitmapTransform
             {
-                ScaledWidth = newW,
-                ScaledHeight = newH,
+                ScaledWidth = (uint)(decoder.PixelWidth * scale),
+                ScaledHeight = (uint)(decoder.PixelHeight * scale),
                 InterpolationMode = BitmapInterpolationMode.Fant
             };
 
-            var bitmapData = await decoder.GetSoftwareBitmapAsync(
+            using var bitmapData = await decoder.GetSoftwareBitmapAsync(
                 BitmapPixelFormat.Bgra8,
                 BitmapAlphaMode.Premultiplied,
                 transform,
                 ExifOrientationMode.RespectExifOrientation,
                 ColorManagementMode.ColorManageToSRgb);
 
-            var outStream = new InMemoryRandomAccessStream();
-            // Set JPEG quality to 85%
-            var propertySet = new BitmapPropertySet();
-            propertySet.Add("ImageQuality", new BitmapTypedValue(0.85, Windows.Foundation.PropertyType.Single));
+            using var outStream = new InMemoryRandomAccessStream();
+            var propertySet = new BitmapPropertySet
+            {
+                { "ImageQuality", new BitmapTypedValue(0.85, Windows.Foundation.PropertyType.Single) }
+            };
             var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.JpegEncoderId, outStream, propertySet);
             encoder.SetSoftwareBitmap(bitmapData);
             await encoder.FlushAsync();
@@ -295,9 +343,9 @@ public class OllamaService
             await outStream.ReadAsync(bytes.AsBuffer(), (uint)outStream.Size, InputStreamOptions.None);
             return bytes;
         }
-        catch
+        catch (Exception ex)
         {
-            // Fallback: read raw file bytes
+            System.Diagnostics.Debug.WriteLine($"[Ollama] ResizeAndEncode failed for {filePath}: {ex.Message} — falling back to raw bytes");
             return await File.ReadAllBytesAsync(filePath);
         }
     }

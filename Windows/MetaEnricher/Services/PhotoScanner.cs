@@ -11,8 +11,9 @@ namespace MetaEnricher.Services;
 public class PhotoScanner
 {
     private static readonly string[] ImageExtensions = { ".jpg", ".jpeg", ".png", ".tif", ".tiff" };
+    private static readonly string[] RawExtensions = { ".arw", ".cr2", ".cr3", ".nef", ".raf", ".rw2", ".dng", ".orf", ".srw", ".pef" };
 
-    public async Task<List<PhotoSession>> FindSessionsAsync(string rootPath, string picksFolderName = "Edited export")
+    public async Task<List<PhotoSession>> FindSessionsAsync(string rootPath, string picksFolderName = AppConstants.DefaultPicksFolder)
     {
         return await Task.Run(() =>
         {
@@ -38,16 +39,18 @@ public class PhotoScanner
 
                     // Look for picks subfolder or JPEG subfolder
                     var editedPath = Path.Combine(dateDir, picksFolderName);
-                    var jpegPath = Path.Combine(dateDir, "JPEG");
-                    var rawPath = Path.Combine(dateDir, "RAW");
+                    var jpegPath = Path.Combine(dateDir, AppConstants.OriginalsSubFolder);
+                    var rawPath = Path.Combine(dateDir, AppConstants.RawSubFolder);
 
                     int editedCount = Directory.Exists(editedPath)
                         ? CountImages(editedPath) : 0;
                     int originalsCount = Directory.Exists(jpegPath)
                         ? CountImages(jpegPath) : 0;
+                    int rawCount = Directory.Exists(rawPath)
+                        ? CountRaw(rawPath) : 0;
 
                     // Only include sessions that have at least some images
-                    if (editedCount == 0 && originalsCount == 0) continue;
+                    if (editedCount == 0 && originalsCount == 0 && rawCount == 0) continue;
 
                     var firstPhoto = GetFirstPhoto(editedPath) ?? GetFirstPhoto(jpegPath);
 
@@ -59,6 +62,7 @@ public class PhotoScanner
                         Label = label,
                         EditedCount = editedCount,
                         OriginalsCount = originalsCount,
+                        RawCount = rawCount,
                         ThumbnailPath = firstPhoto,
                     };
 
@@ -72,13 +76,17 @@ public class PhotoScanner
         });
     }
 
-    public async Task<List<Photo>> LoadPhotosAsync(PhotoSession session, ViewMode mode, string picksFolderName = "Edited export")
+    public async Task<List<Photo>> LoadPhotosAsync(
+        PhotoSession session,
+        ViewMode mode,
+        string picksFolderName = AppConstants.DefaultPicksFolder,
+        System.Threading.CancellationToken ct = default)
     {
         return await Task.Run(async () =>
         {
             var photos = new List<Photo>();
 
-            string subFolder = mode == ViewMode.Edited ? picksFolderName : "JPEG";
+            string subFolder = mode == ViewMode.Edited ? picksFolderName : AppConstants.OriginalsSubFolder;
             var folderPath = Path.Combine(session.FolderPath, subFolder);
 
             if (!Directory.Exists(folderPath)) return photos;
@@ -86,33 +94,29 @@ public class PhotoScanner
             var exifService = ExifService.Instance;
             var files = Directory.EnumerateFiles(folderPath)
                 .Where(f => ImageExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
+                .Where(f => !IsJunkFile(Path.GetFileName(f)))
                 .OrderBy(f => f)
                 .ToList();
 
             foreach (var file in files)
             {
+                ct.ThrowIfCancellationRequested();
                 var meta = await exifService.ReadMetaAsync(file);
-                var photo = new Photo
-                {
-                    Id = file,
-                    FilePath = file,
-                    Meta = meta
-                };
-                photos.Add(photo);
+                photos.Add(new Photo { Id = file, FilePath = file, Meta = meta });
             }
 
             return photos;
-        });
+        }, ct);
     }
 
-    public async Task<SessionEnrichmentStatus> CheckEnrichmentStatusAsync(PhotoSession session)
+    public async Task<SessionEnrichmentStatus> CheckEnrichmentStatusAsync(PhotoSession session, string picksFolderName = AppConstants.DefaultPicksFolder)
     {
         return await Task.Run(async () =>
         {
             var exifService = ExifService.Instance;
-            var editedPath = Path.Combine(session.FolderPath, "Edited export");
+            var editedPath = Path.Combine(session.FolderPath, picksFolderName);
             if (!Directory.Exists(editedPath))
-                editedPath = Path.Combine(session.FolderPath, "JPEG");
+                editedPath = Path.Combine(session.FolderPath, AppConstants.OriginalsSubFolder);
             if (!Directory.Exists(editedPath)) return SessionEnrichmentStatus.Unknown;
 
             var files = Directory.EnumerateFiles(editedPath)
@@ -141,19 +145,34 @@ public class PhotoScanner
 
     public string? FirstPhotoPath(PhotoSession session)
     {
-        var editedPath = Path.Combine(session.FolderPath, "Edited export");
+        var editedPath = Path.Combine(session.FolderPath, AppConstants.DefaultPicksFolder);
         var result = GetFirstPhoto(editedPath);
         if (result != null) return result;
 
-        var jpegPath = Path.Combine(session.FolderPath, "JPEG");
+        var jpegPath = Path.Combine(session.FolderPath, AppConstants.OriginalsSubFolder);
         return GetFirstPhoto(jpegPath);
     }
+
+    // macOS creates "._<name>" sidecar files on FAT/exFAT cards — they look like JPEGs but aren't
+    private static bool IsJunkFile(string fileName) =>
+        fileName.StartsWith("._", StringComparison.Ordinal) ||
+        fileName.Equals(".DS_Store", StringComparison.OrdinalIgnoreCase) ||
+        fileName.Equals("Thumbs.db", StringComparison.OrdinalIgnoreCase);
 
     private static int CountImages(string dirPath)
     {
         if (!Directory.Exists(dirPath)) return 0;
         return Directory.EnumerateFiles(dirPath)
-            .Count(f => ImageExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()));
+            .Count(f => ImageExtensions.Contains(Path.GetExtension(f).ToLowerInvariant())
+                        && !IsJunkFile(Path.GetFileName(f)));
+    }
+
+    private static int CountRaw(string dirPath)
+    {
+        if (!Directory.Exists(dirPath)) return 0;
+        return Directory.EnumerateFiles(dirPath)
+            .Count(f => RawExtensions.Contains(Path.GetExtension(f).ToLowerInvariant())
+                        && !IsJunkFile(Path.GetFileName(f)));
     }
 
     private static string? GetFirstPhoto(string dirPath)
@@ -161,6 +180,7 @@ public class PhotoScanner
         if (!Directory.Exists(dirPath)) return null;
         return Directory.EnumerateFiles(dirPath)
             .Where(f => ImageExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
+            .Where(f => !IsJunkFile(Path.GetFileName(f)))
             .OrderBy(f => f)
             .FirstOrDefault();
     }

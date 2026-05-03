@@ -88,6 +88,8 @@
             <converters:IntToVisibilityConverter x:Key="IntToVisibility" />
             <converters:RatingToStarsConverter x:Key="RatingToStars" />
             <converters:StringFormatConverter x:Key="StringFormat" />
+            <converters:SelectedToBorderBrushConverter x:Key="SelectedToBorderBrush" />
+            <converters:BoolNegationConverter x:Key="BoolNegation" />
         </ResourceDictionary>
     </Application.Resources>
 </Application>

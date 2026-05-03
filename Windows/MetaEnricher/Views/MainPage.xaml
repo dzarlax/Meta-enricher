@@ -23,47 +23,13 @@
             </Grid.RowDefinitions>
 
             <!-- Header -->
-            <Grid Grid.Row="0" Padding="12,12,12,8" ColumnSpacing="4">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
+            <Border Grid.Row="0" Padding="16,14,16,10" BorderThickness="0,0,0,1" BorderBrush="#3A3A3A">
                 <TextBlock
                     Text="Sessions"
                     FontSize="14"
                     FontWeight="SemiBold"
-                    Foreground="#F5F5F5"
-                    VerticalAlignment="Center" />
-                <Button
-                    Grid.Column="1"
-                    Content="↻"
-                    ToolTipService.ToolTip="Refresh sessions"
-                    Click="BtnRefreshSessions_Click"
-                    Background="Transparent"
-                    Foreground="#9CA3AF"
-                    Padding="6,4"
-                    FontSize="14" />
-                <Button
-                    Grid.Column="2"
-                    Content="⤓"
-                    ToolTipService.ToolTip="Import photos"
-                    Click="BtnImport_Click"
-                    Background="Transparent"
-                    Foreground="#9CA3AF"
-                    Padding="6,4"
-                    FontSize="14" />
-                <Button
-                    Grid.Column="3"
-                    Content="⚙"
-                    ToolTipService.ToolTip="Settings"
-                    Click="BtnSettings_Click"
-                    Background="Transparent"
-                    Foreground="#9CA3AF"
-                    Padding="6,4"
-                    FontSize="14" />
-            </Grid>
+                    Foreground="#F5F5F5" />
+            </Border>
 
             <!-- Sessions list -->
             <ListView
@@ -80,6 +46,7 @@
                         <Setter Property="HorizontalContentAlignment" Value="Stretch" />
                         <Setter Property="Background" Value="Transparent" />
                         <Setter Property="CornerRadius" Value="6" />
+                        <Setter Property="UseSystemFocusVisuals" Value="False" />
                     </Style>
                 </ListView.ItemContainerStyle>
                 <ListView.ItemTemplate>
@@ -97,7 +64,7 @@
                                 CornerRadius="6"
                                 Background="#2D2D2D">
                                 <Image
-                                    x:Name="SessionThumb"
+                                    Source="{x:Bind ThumbnailSource, Mode=OneWay}"
                                     Stretch="UniformToFill" />
                             </Border>
 
@@ -110,11 +77,10 @@
                                     Foreground="#F5F5F5"
                                     TextTrimming="CharacterEllipsis" />
                                 <TextBlock
+                                    Text="{x:Bind ActiveCountDisplay, Mode=OneWay}"
                                     FontSize="11"
-                                    Foreground="#9CA3AF">
-                                    <Run Text="{x:Bind EditedCount}" />
-                                    <Run Text=" photos" />
-                                </TextBlock>
+                                    Foreground="#9CA3AF"
+                                    TextTrimming="CharacterEllipsis" />
                             </StackPanel>
 
                             <!-- Status dot -->
@@ -128,15 +94,47 @@
                 </ListView.ItemTemplate>
             </ListView>
 
-            <!-- Bottom: library path -->
-            <Border Grid.Row="2" Padding="12,8" BorderThickness="0,1,0,0" BorderBrush="#3A3A3A">
-                <TextBlock
-                    Text="{x:Bind AppState.CameraRootPath, Mode=OneWay, FallbackValue='No library selected'}"
-                    FontSize="11"
-                    Foreground="#6B7280"
-                    TextTrimming="CharacterEllipsis"
-                    ToolTipService.ToolTip="{x:Bind AppState.CameraRootPath, Mode=OneWay}" />
-            </Border>
+            <!-- Bottom: buttons + library path -->
+            <StackPanel Grid.Row="2" BorderThickness="0,1,0,0" BorderBrush="#3A3A3A" Spacing="0">
+                <Button
+                    Content="↻  Refresh Sessions"
+                    Click="BtnRefreshSessions_Click"
+                    HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Left"
+                    Background="Transparent"
+                    Foreground="#D1D5DB"
+                    BorderThickness="0"
+                    Padding="16,12"
+                    FontSize="13" />
+                <Button
+                    Content="⤓  Import Photos"
+                    Click="BtnImport_Click"
+                    HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Left"
+                    Background="Transparent"
+                    Foreground="#D1D5DB"
+                    BorderThickness="0"
+                    Padding="16,12"
+                    FontSize="13" />
+                <Button
+                    Content="⚙  Settings"
+                    Click="BtnSettings_Click"
+                    HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Left"
+                    Background="Transparent"
+                    Foreground="#D1D5DB"
+                    BorderThickness="0"
+                    Padding="16,12"
+                    FontSize="13" />
+                <Border Padding="16,8" BorderThickness="0,1,0,0" BorderBrush="#3A3A3A">
+                    <TextBlock
+                        Text="{x:Bind AppState.CameraRootPath, Mode=OneWay, FallbackValue='No library selected'}"
+                        FontSize="11"
+                        Foreground="#6B7280"
+                        TextTrimming="CharacterEllipsis"
+                        ToolTipService.ToolTip="{x:Bind AppState.CameraRootPath, Mode=OneWay}" />
+                </Border>
+            </StackPanel>
         </Grid>
 
         <!-- ═══════════════════════════ CENTER PANEL ═══════════════════════════ -->
@@ -147,46 +145,47 @@
             </Grid.RowDefinitions>
 
             <!-- Toolbar -->
-            <Grid Grid.Row="0" Padding="16,12" ColumnSpacing="8" Background="#1F1F1F">
+            <Grid Grid.Row="0" Padding="12,8" ColumnSpacing="8" Background="#1F1F1F">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="120" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="200" />
                 </Grid.ColumnDefinitions>
 
+                <!-- View mode toggle -->
+                <SelectorBar
+                    Grid.Column="0"
+                    x:Name="ViewModeSelector"
+                    SelectionChanged="ViewModeSelector_SelectionChanged"
+                    VerticalAlignment="Center">
+                    <SelectorBarItem x:Name="SbiEdited" Text="Edited" />
+                    <SelectorBarItem x:Name="SbiOriginals" Text="Originals" />
+                </SelectorBar>
+
+                <!-- Vertical separator -->
+                <Border
+                    Grid.Column="1"
+                    Width="1"
+                    Background="#3A3A3A"
+                    Margin="4,6" />
+
                 <!-- Session name -->
                 <TextBlock
+                    Grid.Column="2"
                     Text="{x:Bind AppState.SelectedSession.DisplayName, Mode=OneWay, FallbackValue='Select a session'}"
-                    FontSize="18"
+                    FontSize="16"
                     FontWeight="SemiBold"
                     Foreground="#F5F5F5"
-                    VerticalAlignment="Center" />
-
-                <!-- View mode toggle -->
-                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="0">
-                    <RadioButton
-                        x:Name="RbEdited"
-                        Content="Edited"
-                        GroupName="ViewMode"
-                        IsChecked="True"
-                        Checked="RbEdited_Checked"
-                        Foreground="#F5F5F5"
-                        FontSize="12" />
-                    <RadioButton
-                        x:Name="RbOriginals"
-                        Content="Originals"
-                        GroupName="ViewMode"
-                        Checked="RbOriginals_Checked"
-                        Foreground="#F5F5F5"
-                        FontSize="12" />
-                </StackPanel>
+                    VerticalAlignment="Center"
+                    TextTrimming="CharacterEllipsis" />
 
                 <!-- Zoom slider -->
                 <Slider
-                    Grid.Column="2"
+                    Grid.Column="3"
                     x:Name="ZoomSlider"
                     Minimum="80" Maximum="200"
                     Value="140"
@@ -196,23 +195,25 @@
 
                 <!-- Enrich Selected -->
                 <Button
-                    Grid.Column="3"
+                    Grid.Column="4"
                     Content="Enrich Selected"
                     Click="BtnEnrichSelected_Click"
+                    IsEnabled="{x:Bind AppState.IsEnriching, Mode=OneWay, Converter={StaticResource BoolNegation}}"
                     Style="{StaticResource OutlineButtonStyle}"
                     FontSize="12" />
 
                 <!-- Enrich All -->
                 <Button
-                    Grid.Column="4"
+                    Grid.Column="5"
                     Content="Enrich All"
                     Click="BtnEnrichAll_Click"
+                    IsEnabled="{x:Bind AppState.IsEnriching, Mode=OneWay, Converter={StaticResource BoolNegation}}"
                     Style="{StaticResource AccentButtonStyle}"
                     FontSize="12" />
 
                 <!-- Session notes -->
                 <TextBox
-                    Grid.Column="5"
+                    Grid.Column="6"
                     x:Name="TbSessionNotes"
                     PlaceholderText="Session notes for AI..."
                     Text="{x:Bind AppState.SessionNotes, Mode=TwoWay}"
@@ -235,6 +236,52 @@
                     <ProgressRing IsActive="True" Width="48" Height="48" Foreground="{StaticResource AmberBrush}" />
                     <TextBlock Text="Loading photos..." Foreground="#9CA3AF" />
                 </StackPanel>
+
+                <!-- Enrichment progress banner -->
+                <Border
+                    Visibility="{x:Bind AppState.IsEnriching, Mode=OneWay, Converter={StaticResource BoolToVisibility}}"
+                    HorizontalAlignment="Stretch"
+                    VerticalAlignment="Top"
+                    Background="#1F1F1F"
+                    BorderBrush="#FFB938"
+                    BorderThickness="0,0,0,2"
+                    Padding="16,10"
+                    Canvas.ZIndex="20">
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <ProgressRing IsActive="True" Width="20" Height="20" Foreground="{StaticResource AmberBrush}" />
+                        <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
+                            <TextBlock FontSize="13" Foreground="#F5F5F5">
+                                <Run Text="Enriching" />
+                                <Run Text="{x:Bind AppState.EnrichmentDone, Mode=OneWay}" />
+                                <Run Text="of" />
+                                <Run Text="{x:Bind AppState.EnrichmentTotal, Mode=OneWay}" />
+                                <Run Text="—" />
+                                <Run Text="{x:Bind AppState.EnrichmentCurrentFile, Mode=OneWay}" Foreground="#9CA3AF" />
+                            </TextBlock>
+                            <ProgressBar
+                                Minimum="0"
+                                Maximum="{x:Bind AppState.EnrichmentTotal, Mode=OneWay}"
+                                Value="{x:Bind AppState.EnrichmentDone, Mode=OneWay}"
+                                Foreground="{StaticResource AmberBrush}"
+                                Background="#3A3A3A"
+                                Height="3" />
+                        </StackPanel>
+                        <Button
+                            Grid.Column="2"
+                            Content="Cancel"
+                            Click="BtnCancelEnrich_Click"
+                            Background="Transparent"
+                            BorderBrush="#3A3A3A"
+                            Foreground="#9CA3AF"
+                            FontSize="12"
+                            Padding="10,4" />
+                    </Grid>
+                </Border>
 
                 <!-- Empty state -->
                 <StackPanel
@@ -271,6 +318,8 @@
                                     Background="#242424"
                                     CornerRadius="6"
                                     Margin="2"
+                                    BorderThickness="2"
+                                    BorderBrush="{x:Bind IsSelected, Mode=OneWay, Converter={StaticResource SelectedToBorderBrush}}"
                                     Tapped="PhotoCard_Tapped"
                                     DoubleTapped="PhotoCard_DoubleTapped"
                                     Tag="{x:Bind Id}">
@@ -348,13 +397,14 @@
 
                     <!-- Preview image -->
                     <Border
-                        MaxHeight="220"
                         CornerRadius="6"
-                        Background="#242424">
+                        Background="#242424"
+                        MaxHeight="260">
                         <Image
                             x:Name="PreviewImage"
                             Stretch="Uniform"
-                            MaxHeight="220" />
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center" />
                     </Border>
 
                     <!-- Metadata form -->
@@ -515,6 +565,7 @@
                     Grid.Column="1"
                     Content="Enrich"
                     Click="BtnEnrichSingle_Click"
+                    IsEnabled="{x:Bind AppState.IsEnriching, Mode=OneWay, Converter={StaticResource BoolNegation}}"
                     Style="{StaticResource OutlineButtonStyle}" />
             </Grid>
         </Grid>

@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using CommunityToolkit.Mvvm.ComponentModel;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
 
 namespace MetaEnricher.Models;
 
@@ -9,7 +10,7 @@ public enum LibrarySchema { MetaEnricher, Custom }
 public enum SessionEnrichmentStatus { Unknown, Pending, Partial, Enriched }
 public enum EnrichField { Title, Description, Keywords, Location }
 
-public class PhotoSession
+public partial class PhotoSession : ObservableObject
 {
     public string Id { get; init; } = "";
     public string FolderPath { get; init; } = "";
@@ -17,10 +18,17 @@ public class PhotoSession
     public string? Label { get; init; }
     public int EditedCount { get; set; }
     public int OriginalsCount { get; set; }
+    public int RawCount { get; set; }
     public int EnrichedCount { get; set; }
     public string? ThumbnailPath { get; set; }
     public string DisplayName => Label != null ? $"{DateString} {Label}" : DateString;
     public SessionEnrichmentStatus EnrichmentStatus { get; set; } = SessionEnrichmentStatus.Unknown;
+
+    [ObservableProperty]
+    private string _activeCountDisplay = "";
+
+    [ObservableProperty]
+    private ImageSource? _thumbnailSource;
 }
 
 public class PhotoMeta
@@ -71,6 +79,9 @@ public partial class Photo : ObservableObject
     // Bound directly in ItemsRepeater DataTemplate — avoids TryGetElement(index) race.
     [ObservableProperty]
     private ImageSource? _thumbnailSource;
+
+    [ObservableProperty]
+    private bool _isSelected;
 }
 
 public class MetaWrite

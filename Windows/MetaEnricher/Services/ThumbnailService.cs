@@ -10,21 +10,18 @@ public class ThumbnailService
     private static ThumbnailService? _instance;
     public static ThumbnailService Instance => _instance ??= new ThumbnailService();
 
-    // Key: "filePath|decodeWidth"
-    private readonly Dictionary<string, BitmapImage> _cache = new();
+    // Key: "filePath|decodeWidth"  →  (image, approximate decoded bytes)
+    private readonly Dictionary<string, (BitmapImage Image, long Bytes)> _cache = new();
     private readonly Queue<string> _cacheOrder = new();
-    private const int MaxCacheSize = 300;
+    private long _totalBytes = 0;
+    // Cap at ~150MB of decoded thumbnail pixels — works for 1000s of small thumbs or 100s of large ones
+    private const long MaxCacheBytes = 150 * 1024 * 1024;
 
-    /// <summary>
-    /// Returns a BitmapImage for the given path and decode width.
-    /// Must be called on the UI thread. BitmapImage loads the file asynchronously
-    /// on its own — no await needed here.
-    /// </summary>
     public BitmapImage? GetThumbnail(string filePath, int decodeWidth)
     {
         var key = $"{filePath}|{decodeWidth}";
         if (_cache.TryGetValue(key, out var cached))
-            return cached;
+            return cached.Image;
 
         if (!File.Exists(filePath))
             return null;
@@ -33,15 +30,23 @@ public class ThumbnailService
         {
             DecodePixelWidth = decodeWidth,
             DecodePixelType = DecodePixelType.Logical,
-            // UriSource starts the async file load immediately on a background thread.
             UriSource = new Uri(filePath)
         };
 
-        if (_cache.Count >= MaxCacheSize && _cacheOrder.Count > 0)
-            _cache.Remove(_cacheOrder.Dequeue());
+        // Estimate: 4 bytes/pixel BGRA, assume square aspect for safety (real ratio unknown until decode)
+        long approxBytes = (long)decodeWidth * decodeWidth * 4;
 
-        _cache[key] = bmp;
+        // Evict oldest until under budget
+        while (_totalBytes + approxBytes > MaxCacheBytes && _cacheOrder.Count > 0)
+        {
+            var oldKey = _cacheOrder.Dequeue();
+            if (_cache.Remove(oldKey, out var evicted))
+                _totalBytes -= evicted.Bytes;
+        }
+
+        _cache[key] = (bmp, approxBytes);
         _cacheOrder.Enqueue(key);
+        _totalBytes += approxBytes;
         return bmp;
     }
 
@@ -52,12 +57,16 @@ public class ThumbnailService
             if (key.StartsWith(filePath + "|"))
                 toRemove.Add(key);
         foreach (var key in toRemove)
-            _cache.Remove(key);
+        {
+            if (_cache.Remove(key, out var entry))
+                _totalBytes -= entry.Bytes;
+        }
     }
 
     public void PurgeAll()
     {
         _cache.Clear();
         _cacheOrder.Clear();
+        _totalBytes = 0;
     }
 }

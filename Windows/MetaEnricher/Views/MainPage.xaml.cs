@@ -21,9 +21,27 @@ public sealed partial class MainPage : Page
     public MainPage()
     {
         this.InitializeComponent();
+        ViewModeSelector.SelectedItem = AppState.ViewMode == ViewMode.Originals ? SbiOriginals : SbiEdited;
         AppState.PropertyChanged += AppState_PropertyChanged;
         AppState.Photos.CollectionChanged += Photos_CollectionChanged;
+        AppState.Sessions.CollectionChanged += Sessions_CollectionChanged;
         Loaded += MainPage_Loaded;
+    }
+
+    protected override void OnNavigatedTo(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
+    {
+        base.OnNavigatedTo(e);
+        // Remove focus from SessionsList to avoid stray focus rectangle after returning from fullscreen
+        this.Focus(FocusState.Programmatic);
+    }
+
+    protected override void OnNavigatedFrom(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
+    {
+        base.OnNavigatedFrom(e);
+        // Unsubscribe from singleton events to prevent leaks when this page is recreated
+        AppState.PropertyChanged -= AppState_PropertyChanged;
+        AppState.Photos.CollectionChanged -= Photos_CollectionChanged;
+        AppState.Sessions.CollectionChanged -= Sessions_CollectionChanged;
     }
 
     private async void MainPage_Loaded(object sender, RoutedEventArgs e)
@@ -44,8 +62,57 @@ public sealed partial class MainPage : Page
                 case nameof(AppState.IsLoadingPhotos):
                     UpdateEmptyState();
                     break;
+                case nameof(AppState.ViewMode):
+                    SyncViewModeSelector();
+                    UpdateSessionCounts();
+                    break;
             }
         });
+    }
+
+    private void SyncViewModeSelector()
+    {
+        var target = AppState.ViewMode == ViewMode.Originals ? SbiOriginals : SbiEdited;
+        if (ViewModeSelector.SelectedItem != target)
+            ViewModeSelector.SelectedItem = target;
+    }
+
+    private void Sessions_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            AssignSessionThumbnails();
+            UpdateSessionCounts();
+        });
+    }
+
+    private void AssignSessionThumbnails()
+    {
+        foreach (var session in AppState.Sessions)
+        {
+            if (session.ThumbnailSource == null && session.ThumbnailPath != null)
+                session.ThumbnailSource = ThumbnailService.Instance.GetThumbnail(session.ThumbnailPath, 48);
+        }
+    }
+
+    private void UpdateSessionCounts()
+    {
+        bool isEdited = AppState.ViewMode == ViewMode.Edited;
+        foreach (var session in AppState.Sessions)
+        {
+            if (isEdited)
+            {
+                session.ActiveCountDisplay = session.EditedCount > 0
+                    ? $"{session.EditedCount} edited" : "No edited photos";
+            }
+            else
+            {
+                var parts = new List<string>();
+                if (session.OriginalsCount > 0) parts.Add($"{session.OriginalsCount} JPEG");
+                if (session.RawCount > 0) parts.Add($"{session.RawCount} RAW");
+                session.ActiveCountDisplay = parts.Count > 0 ? string.Join(" · ", parts) : "No originals";
+            }
+        }
     }
 
     private void Photos_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
@@ -174,14 +241,11 @@ public sealed partial class MainPage : Page
         await dlg.ShowAsync();
     }
 
-    private void RbEdited_Checked(object sender, RoutedEventArgs e)
+    private void ViewModeSelector_SelectionChanged(SelectorBar sender, SelectorBarSelectionChangedEventArgs e)
     {
-        if (AppState != null) AppState.ViewMode = ViewMode.Edited;
-    }
-
-    private void RbOriginals_Checked(object sender, RoutedEventArgs e)
-    {
-        if (AppState != null) AppState.ViewMode = ViewMode.Originals;
+        if (AppState == null) return;
+        AppState.ViewMode = sender.SelectedItem == SbiOriginals ? ViewMode.Originals : ViewMode.Edited;
+        UpdateSessionCounts();
     }
 
     private void ZoomSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
@@ -207,21 +271,39 @@ public sealed partial class MainPage : Page
 
     private void PhotoCard_Tapped(object sender, TappedRoutedEventArgs e)
     {
-        if (sender is Border card && card.Tag is string photoId)
+        if (sender is not Border card || card.Tag is not string photoId) return;
+        var photo = AppState.Photos.FirstOrDefault(p => p.Id == photoId);
+        if (photo == null) return;
+
+        bool ctrl = Microsoft.UI.Input.InputKeyboardSource
+            .GetKeyStateForCurrentThread(Windows.System.VirtualKey.Control)
+            .HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
+
+        if (ctrl)
         {
-            var photo = AppState.Photos.FirstOrDefault(p => p.Id == photoId);
-            if (photo != null)
+            // Toggle this photo in the multi-selection
+            if (AppState.SelectedPhotoIds.Contains(photoId))
             {
-                AppState.SelectedPhoto = photo;
-                // Toggle selection in set
-                if (AppState.SelectedPhotoIds.Contains(photoId))
-                    AppState.SelectedPhotoIds.Remove(photoId);
-                else
-                {
-                    AppState.SelectedPhotoIds.Clear();
-                    AppState.SelectedPhotoIds.Add(photoId);
-                }
+                AppState.SelectedPhotoIds.Remove(photoId);
+                photo.IsSelected = false;
             }
+            else
+            {
+                AppState.SelectedPhotoIds.Add(photoId);
+                photo.IsSelected = true;
+            }
+            AppState.SelectedPhoto = photo;
+        }
+        else
+        {
+            // Clear previous selection
+            foreach (var p in AppState.Photos)
+                p.IsSelected = false;
+            AppState.SelectedPhotoIds.Clear();
+
+            AppState.SelectedPhotoIds.Add(photoId);
+            photo.IsSelected = true;
+            AppState.SelectedPhoto = photo;
         }
     }
 
@@ -252,9 +334,13 @@ public sealed partial class MainPage : Page
         var photo = AppState.SelectedPhoto;
         if (photo == null) return;
 
-        var locationParts = TbLocation.Text.Split(',', 2, StringSplitOptions.TrimEntries);
-        var city = locationParts.Length > 0 ? locationParts[0] : null;
-        var country = locationParts.Length > 1 ? locationParts[1] : null;
+        string? city = null, country = null;
+        if (!string.IsNullOrWhiteSpace(TbLocation.Text))
+        {
+            var parts = TbLocation.Text.Split(',', 2, StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length > 0) city = parts[0];
+            if (parts.Length > 1) country = parts[1];
+        }
 
         var keywords = TbKeywords.Text
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -322,9 +408,24 @@ public sealed partial class MainPage : Page
         await EnrichPhotosAsync(photos, new HashSet<EnrichField>(Enum.GetValues<EnrichField>()));
     }
 
+    private System.Threading.CancellationTokenSource? _enrichCts;
+
     private async Task EnrichPhotosAsync(IList<Photo> photos, HashSet<EnrichField> fields)
     {
         if (photos.Count == 0) return;
+        if (AppState.IsEnriching)
+        {
+            ShowInfoBar("Enrichment already in progress.", InfoBarSeverity.Warning);
+            return;
+        }
+
+        _enrichCts = new System.Threading.CancellationTokenSource();
+        var ct = _enrichCts.Token;
+
+        AppState.IsEnriching = true;
+        AppState.EnrichmentTotal = photos.Count;
+        AppState.EnrichmentDone = 0;
+        AppState.EnrichmentCurrentFile = "";
 
         foreach (var photo in photos)
         {
@@ -332,19 +433,31 @@ public sealed partial class MainPage : Page
             AppState.EnrichingIds.Add(photo.Id);
         }
 
+        int successCount = 0;
         try
         {
             foreach (var photo in photos)
             {
+                if (ct.IsCancellationRequested) break;
+                AppState.EnrichmentCurrentFile = photo.FileName;
+
                 try
                 {
+                    System.Diagnostics.Debug.WriteLine($"[Enrich] Starting: {photo.FileName}");
+
                     var enriched = await OllamaService.Instance.EnrichPhotoAsync(
                         photo.FilePath,
                         AppState.OllamaUrl,
                         AppState.OllamaModel,
+                        AppState.OllamaApiKey,
                         AppState.SessionNotes,
                         photo.Meta,
                         fields);
+
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[Enrich] Ollama result — title='{enriched.Title}' " +
+                        $"desc='{enriched.Description?.Substring(0, Math.Min(60, enriched.Description?.Length ?? 0))}' " +
+                        $"keywords={enriched.Keywords.Count} location='{enriched.Location}'");
 
                     // GPS → geocode if needed
                     if (fields.Contains(EnrichField.Location) && enriched.GpsLat.HasValue && enriched.GpsLon.HasValue
@@ -370,6 +483,7 @@ public sealed partial class MainPage : Page
 
                     // Write to file
                     var locationParts = enriched.Location?.Split(',', 2, StringSplitOptions.TrimEntries);
+                    System.Diagnostics.Debug.WriteLine($"[Enrich] Writing EXIF to: {photo.FilePath}");
                     await ExifService.Instance.WriteMetaAsync(photo.FilePath, new MetaWrite
                     {
                         Title = enriched.Title,
@@ -383,6 +497,7 @@ public sealed partial class MainPage : Page
                         GpsLat = enriched.GpsLat,
                         GpsLon = enriched.GpsLon,
                     });
+                    System.Diagnostics.Debug.WriteLine($"[Enrich] EXIF write OK: {photo.FileName}");
 
                     photo.Meta = enriched;
                     DispatcherQueue.TryEnqueue(() =>
@@ -391,22 +506,41 @@ public sealed partial class MainPage : Page
                         if (AppState.SelectedPhoto?.Id == photo.Id)
                             UpdateInspector();
                     });
+                    successCount++;
                 }
                 catch (Exception ex)
                 {
+                    System.Diagnostics.Debug.WriteLine($"[Enrich] ERROR on {photo.FileName}: {ex}");
                     ShowInfoBar($"Enrich failed for {photo.FileName}: {ex.Message}", InfoBarSeverity.Error);
                 }
                 finally
                 {
                     DispatcherQueue.TryEnqueue(() => AppState.EnrichingIds.Remove(photo.Id));
+                    AppState.EnrichmentDone++;
                 }
             }
-            ShowInfoBar($"Enriched {photos.Count} photo(s).", InfoBarSeverity.Success);
+
+            var msg = ct.IsCancellationRequested
+                ? $"Enrichment cancelled — {successCount} of {photos.Count} done."
+                : $"Enriched {successCount} of {photos.Count} photo(s).";
+            ShowInfoBar(msg, ct.IsCancellationRequested ? InfoBarSeverity.Warning : InfoBarSeverity.Success);
         }
         catch (Exception ex)
         {
             ShowInfoBar($"Enrichment error: {ex.Message}", InfoBarSeverity.Error);
         }
+        finally
+        {
+            AppState.IsEnriching = false;
+            AppState.EnrichmentCurrentFile = "";
+            _enrichCts?.Dispose();
+            _enrichCts = null;
+        }
+    }
+
+    private void BtnCancelEnrich_Click(object sender, RoutedEventArgs e)
+    {
+        _enrichCts?.Cancel();
     }
 
     private void ShowInfoBar(string message, InfoBarSeverity severity)
@@ -424,13 +558,15 @@ public sealed partial class MainPage : Page
                 Margin = new Thickness(0, 0, 0, 20),
             };
 
-            // Add to the page's root grid temporarily
             if (this.Content is Grid rootGrid)
             {
                 Grid.SetColumnSpan(infoBar, 3);
                 rootGrid.Children.Add(infoBar);
-                await Task.Delay(3000);
-                rootGrid.Children.Remove(infoBar);
+                // Errors stay longer — user needs to read them
+                int delayMs = severity == InfoBarSeverity.Error ? 8000 : 3000;
+                await Task.Delay(delayMs);
+                if (rootGrid.Children.Contains(infoBar))
+                    rootGrid.Children.Remove(infoBar);
             }
         });
     }

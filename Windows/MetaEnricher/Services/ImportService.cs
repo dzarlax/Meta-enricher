@@ -3,10 +3,13 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace MetaEnricher.Services;
 
+public record ImportItem(string SourcePath, string DestPath, string FileName, DateTime Date, bool IsNew);
+public record ScanResult(List<ImportItem> NewFiles, int AlreadyCopied, int TotalOnCard);
 public record ImportProgress(int Total, int Copied, string CurrentFile, bool Done, string? Error);
 
 public class ImportService
@@ -15,7 +18,7 @@ public class ImportService
     public static ImportService Instance => _instance ??= new ImportService();
 
     private static readonly string[] JpegExtensions = { ".jpg", ".jpeg" };
-    private static readonly string[] RawExtensions = { ".arw", ".nef", ".cr2", ".dng", ".raf", ".orf", ".rw2", ".cr3" };
+    private static readonly string[] RawExtensions  = { ".arw", ".nef", ".cr2", ".dng", ".raf", ".orf", ".rw2", ".cr3" };
 
     public List<string> FindDriveRoots()
     {
@@ -25,8 +28,7 @@ public class ImportService
             try
             {
                 if (!drive.IsReady) continue;
-                var dcim = Path.Combine(drive.RootDirectory.FullName, "DCIM");
-                if (Directory.Exists(dcim))
+                if (Directory.Exists(Path.Combine(drive.RootDirectory.FullName, "DCIM")))
                     roots.Add(drive.RootDirectory.FullName);
             }
             catch { }
@@ -34,81 +36,84 @@ public class ImportService
         return roots;
     }
 
-    public async Task ImportAsync(string sourcePath, string destPath, string schema, IProgress<ImportProgress> progress)
+    public async Task<ScanResult> ScanAsync(string sourceDcimPath, string destPath)
     {
-        await Task.Run(async () =>
+        return await Task.Run(() =>
         {
-            var allExtensions = JpegExtensions.Concat(RawExtensions).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var allExtensions = JpegExtensions.Concat(RawExtensions)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-            var files = new List<string>();
+            var allFiles = new List<string>();
             try
             {
-                foreach (var f in Directory.EnumerateFiles(sourcePath, "*", SearchOption.AllDirectories))
-                {
-                    var ext = Path.GetExtension(f).ToLowerInvariant();
-                    if (allExtensions.Contains(ext))
-                        files.Add(f);
-                }
+                allFiles = Directory.EnumerateFiles(sourceDcimPath, "*", SearchOption.AllDirectories)
+                    .Where(f => allExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()))
+                    .Where(f => !Path.GetFileName(f).StartsWith("._", StringComparison.Ordinal))
+                    .ToList();
             }
-            catch (Exception ex)
+            catch { }
+
+            var newFiles = new List<ImportItem>();
+            int alreadyCopied = 0;
+
+            foreach (var file in allFiles)
             {
-                progress.Report(new ImportProgress(0, 0, "", true, ex.Message));
-                return;
+                var date    = ExtractDate(file);
+                var year    = date.Year.ToString("D4");
+                var dateStr = date.ToString("yyyy-MM-dd");
+                var ext     = Path.GetExtension(file).ToLowerInvariant();
+                var subDir  = RawExtensions.Contains(ext) ? AppConstants.RawSubFolder : AppConstants.OriginalsSubFolder;
+                var destDir  = Path.Combine(destPath, year, dateStr, subDir);
+                var destFile = Path.Combine(destDir, Path.GetFileName(file));
+
+                bool exists = File.Exists(destFile) &&
+                              new FileInfo(file).Length == new FileInfo(destFile).Length;
+
+                if (exists)
+                    alreadyCopied++;
+                else
+                    newFiles.Add(new ImportItem(file, destFile, Path.GetFileName(file), date, true));
             }
 
-            int total = files.Count;
+            return new ScanResult(newFiles, alreadyCopied, allFiles.Count);
+        });
+    }
+
+    public async Task ImportAsync(
+        IList<ImportItem> items,
+        IProgress<ImportProgress> progress,
+        CancellationToken ct = default)
+    {
+        await Task.Run(() =>
+        {
+            int total  = items.Count;
             int copied = 0;
 
-            foreach (var file in files)
+            foreach (var item in items)
             {
-                progress.Report(new ImportProgress(total, copied, Path.GetFileName(file), false, null));
+                if (ct.IsCancellationRequested) break;
 
+                progress.Report(new ImportProgress(total, copied, item.FileName, false, null));
                 try
                 {
-                    var date = ExtractDate(file);
-                    var year = date.Year.ToString("D4");
-                    var dateStr = date.ToString("yyyy-MM-dd");
-
-                    var ext = Path.GetExtension(file).ToLowerInvariant();
-                    var isRaw = RawExtensions.Contains(ext);
-                    var subDir = isRaw ? "RAW" : "JPEG";
-
-                    var destDir = Path.Combine(destPath, year, dateStr, subDir);
-                    Directory.CreateDirectory(destDir);
-
-                    var destFile = Path.Combine(destDir, Path.GetFileName(file));
-
-                    // Skip if same size
-                    if (File.Exists(destFile))
-                    {
-                        var srcInfo = new FileInfo(file);
-                        var dstInfo = new FileInfo(destFile);
-                        if (srcInfo.Length == dstInfo.Length)
-                        {
-                            copied++;
-                            continue;
-                        }
-                    }
-
-                    File.Copy(file, destFile, overwrite: false);
+                    if (File.Exists(item.DestPath)) { copied++; continue; }
+                    Directory.CreateDirectory(Path.GetDirectoryName(item.DestPath)!);
+                    File.Copy(item.SourcePath, item.DestPath);
                     copied++;
                 }
                 catch (Exception ex)
                 {
-                    progress.Report(new ImportProgress(total, copied, Path.GetFileName(file), false, ex.Message));
+                    progress.Report(new ImportProgress(total, copied, item.FileName, false, ex.Message));
                 }
             }
 
             progress.Report(new ImportProgress(total, copied, "", true, null));
-        });
+        }, ct);
     }
 
     private static DateTime ExtractDate(string filePath)
     {
-        var name = Path.GetFileNameWithoutExtension(filePath);
-
-        // Try DSC_YYYYMMDD or IMG_YYYYMMDD patterns
-        var match = Regex.Match(name, @"(\d{4})(\d{2})(\d{2})");
+        var match = Regex.Match(Path.GetFileNameWithoutExtension(filePath), @"(\d{4})(\d{2})(\d{2})");
         if (match.Success &&
             int.TryParse(match.Groups[1].Value, out int y) &&
             int.TryParse(match.Groups[2].Value, out int mo) &&
@@ -116,8 +121,6 @@ public class ImportService
         {
             try { return new DateTime(y, mo, d); } catch { }
         }
-
-        // Fallback to file modification time
         return File.GetLastWriteTime(filePath);
     }
 }

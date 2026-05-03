@@ -26,7 +26,7 @@ public partial class AppState : ObservableObject
     private LibrarySchema _librarySchema = LibrarySchema.MetaEnricher;
 
     [ObservableProperty]
-    private string _picksFolderName = "Edited export";
+    private string _picksFolderName = AppConstants.DefaultPicksFolder;
 
     [ObservableProperty]
     private string? _cameraRootPath;
@@ -39,10 +39,13 @@ public partial class AppState : ObservableObject
     }
 
     [ObservableProperty]
-    private string _ollamaUrl = "http://localhost:11434";
+    private string _ollamaUrl = AppConstants.DefaultOllamaUrl;
 
     [ObservableProperty]
-    private string _ollamaModel = "qwen2.5vl";
+    private string _ollamaModel = AppConstants.DefaultOllamaModel;
+
+    [ObservableProperty]
+    private string _ollamaApiKey = "";
 
     [ObservableProperty]
     private string _defaultCreator = "";
@@ -58,8 +61,26 @@ public partial class AppState : ObservableObject
 
     partial void OnSelectedSessionChanged(PhotoSession? value)
     {
-        if (value != null)
-            _ = SelectSessionAsync(value);
+        if (value == null) return;
+
+        // Auto-switch view mode based on what the session actually contains:
+        // - Edited mode but no edited photos → switch to Originals (avoid empty grid)
+        // - Originals mode but no JPEG/RAW → switch back to Edited (rare)
+        // Setting ViewMode here triggers OnViewModeChanged which calls SelectSessionAsync,
+        // so we return early to avoid double-loading.
+        bool hasOriginals = value.OriginalsCount > 0 || value.RawCount > 0;
+        if (ViewMode == ViewMode.Edited && value.EditedCount == 0 && hasOriginals)
+        {
+            ViewMode = ViewMode.Originals;
+            return;
+        }
+        if (ViewMode == ViewMode.Originals && !hasOriginals && value.EditedCount > 0)
+        {
+            ViewMode = ViewMode.Edited;
+            return;
+        }
+
+        _ = SelectSessionAsync(value);
     }
 
     [ObservableProperty]
@@ -87,15 +108,32 @@ public partial class AppState : ObservableObject
     private ObservableCollection<string> _enrichingIds = new();
 
     [ObservableProperty]
+    private bool _isEnriching;
+
+    [ObservableProperty]
+    private int _enrichmentTotal;
+
+    [ObservableProperty]
+    private int _enrichmentDone;
+
+    [ObservableProperty]
+    private string _enrichmentCurrentFile = "";
+
+    [ObservableProperty]
     private string _sessionNotes = "";
+
+    public bool IsBusy => IsEnriching || IsLoadingPhotos;
+
+    partial void OnIsEnrichingChanged(bool value) => OnPropertyChanged(nameof(IsBusy));
+    partial void OnIsLoadingPhotosChanged(bool value) => OnPropertyChanged(nameof(IsBusy));
 
     public AppState()
     {
         var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-        var dir = Path.Combine(appData, "MetaEnricher");
+        var dir = Path.Combine(appData, AppConstants.AppDataDirName);
         Directory.CreateDirectory(dir);
-        _settingsPath = Path.Combine(dir, "settings.json");
-        _notesPath    = Path.Combine(dir, "session_notes.json");
+        _settingsPath = Path.Combine(dir, AppConstants.SettingsFileName);
+        _notesPath    = Path.Combine(dir, AppConstants.SessionNotesFileName);
         LoadSettings();
         LoadSessionNotesCache();
         _initialized = true;
@@ -116,9 +154,17 @@ public partial class AppState : ObservableObject
         });
     }
 
+    private System.Threading.CancellationTokenSource? _sessionLoadCts;
+
     public async Task SelectSessionAsync(PhotoSession session)
     {
+        // Cancel any in-flight load
+        _sessionLoadCts?.Cancel();
+        _sessionLoadCts = new System.Threading.CancellationTokenSource();
+        var ct = _sessionLoadCts.Token;
+
         IsLoadingPhotos = true;
+        foreach (var p in Photos) p.IsSelected = false;
         Photos.Clear();
         SelectedPhoto = null;
         SelectedPhotoIds = new HashSet<string>();
@@ -127,17 +173,22 @@ public partial class AppState : ObservableObject
 
         try
         {
-            var photos = await _scanner.LoadPhotosAsync(session, ViewMode, PicksFolderName);
+            var photos = await _scanner.LoadPhotosAsync(session, ViewMode, PicksFolderName, ct);
+            if (ct.IsCancellationRequested) return;
+
             App.CurrentWindow?.DispatcherQueue.TryEnqueue(() =>
             {
+                if (ct.IsCancellationRequested) return;
                 Photos.Clear();
                 foreach (var p in photos)
                     Photos.Add(p);
                 IsLoadingPhotos = false;
             });
         }
-        catch
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
         {
+            System.Diagnostics.Debug.WriteLine($"[AppState] SelectSessionAsync failed: {ex}");
             IsLoadingPhotos = false;
         }
     }
@@ -196,7 +247,10 @@ public partial class AppState : ObservableObject
             var json = JsonSerializer.Serialize(_sessionNotesCache, new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(_notesPath, json);
         }
-        catch { }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[AppState] SaveSessionNotes failed: {ex.Message}");
+        }
     }
 
     private void LoadSessionNotesCache()
@@ -207,10 +261,13 @@ public partial class AppState : ObservableObject
             var json = File.ReadAllText(_notesPath);
             _sessionNotesCache = JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? new();
         }
-        catch { }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[AppState] LoadSessionNotesCache failed: {ex.Message}");
+        }
     }
 
-    public void SaveSettings()
+    public bool SaveSettings()
     {
         var settings = new SettingsData
         {
@@ -220,11 +277,21 @@ public partial class AppState : ObservableObject
             CameraRootPath = CameraRootPath,
             OllamaUrl = OllamaUrl,
             OllamaModel = OllamaModel,
+            OllamaApiKey = OllamaApiKey,
             DefaultCreator = DefaultCreator,
             DefaultCopyright = DefaultCopyright,
         };
-        var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
-        File.WriteAllText(_settingsPath, json);
+        try
+        {
+            var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(_settingsPath, json);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[AppState] SaveSettings failed: {ex.Message}");
+            return false;
+        }
     }
 
     public void LoadSettings()
@@ -239,14 +306,18 @@ public partial class AppState : ObservableObject
             HasCompletedOnboarding = settings.HasCompletedOnboarding;
             if (Enum.TryParse<LibrarySchema>(settings.LibrarySchema, out var schema))
                 LibrarySchema = schema;
-            PicksFolderName = settings.PicksFolderName ?? "Edited export";
+            PicksFolderName = settings.PicksFolderName ?? AppConstants.DefaultPicksFolder;
             CameraRootPath = settings.CameraRootPath;
-            OllamaUrl = settings.OllamaUrl ?? "http://localhost:11434";
-            OllamaModel = settings.OllamaModel ?? "qwen2.5vl";
+            OllamaUrl = settings.OllamaUrl ?? AppConstants.DefaultOllamaUrl;
+            OllamaModel = settings.OllamaModel ?? AppConstants.DefaultOllamaModel;
+            OllamaApiKey = settings.OllamaApiKey ?? "";
             DefaultCreator = settings.DefaultCreator ?? "";
             DefaultCopyright = settings.DefaultCopyright ?? "";
         }
-        catch { }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[AppState] LoadSettings failed: {ex.Message}");
+        }
     }
 
     private class SettingsData
@@ -257,6 +328,7 @@ public partial class AppState : ObservableObject
         public string? CameraRootPath { get; set; }
         public string? OllamaUrl { get; set; }
         public string? OllamaModel { get; set; }
+        public string? OllamaApiKey { get; set; }
         public string? DefaultCreator { get; set; }
         public string? DefaultCopyright { get; set; }
     }

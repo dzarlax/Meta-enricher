@@ -16,7 +16,7 @@
         <!-- Top toolbar -->
         <Grid
             Grid.Row="0"
-            Padding="16,12"
+            Padding="16,12,154,12"
             Background="#0A0A0A"
             ColumnSpacing="8">
             <Grid.ColumnDefinitions>
@@ -97,21 +97,14 @@
         </Grid>
 
         <!-- Main image area -->
-        <ScrollViewer
+        <Image
+            x:Name="FullscreenImage"
             Grid.Row="1"
-            HorizontalScrollBarVisibility="Auto"
-            VerticalScrollBarVisibility="Auto"
-            ZoomMode="Enabled"
-            MinZoomFactor="0.5"
-            MaxZoomFactor="8">
-            <Grid HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
-                <Image
-                    x:Name="FullscreenImage"
-                    Stretch="Uniform"
-                    HorizontalAlignment="Center"
-                    VerticalAlignment="Center" />
-            </Grid>
-        </ScrollViewer>
+            Stretch="Uniform"
+            HorizontalAlignment="Center"
+            VerticalAlignment="Center"
+            Tapped="FullscreenImage_Tapped"
+            ToolTipService.ToolTip="← → navigate · R rotate · Esc close" />
 
         <!-- Bottom EXIF overlay -->
         <Border

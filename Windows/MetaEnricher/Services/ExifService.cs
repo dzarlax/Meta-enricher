@@ -88,7 +88,10 @@ public class ExifService
                             meta.LocationSource = "gps";
                         }
                     }
-                    catch { }
+                    catch (Exception xmpEx)
+                    {
+                        Debug.WriteLine($"[Exif] XMP parse failed for {filePath}: {xmpEx.Message}");
+                    }
                 }
 
                 // XMP - Rating
@@ -117,10 +120,16 @@ public class ExifService
                                 meta.Description = xmpDesc.Value;
                         }
                     }
-                    catch { }
+                    catch (Exception xmpEx)
+                    {
+                        Debug.WriteLine($"[Exif] XMP parse failed for {filePath}: {xmpEx.Message}");
+                    }
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[Exif] ReadMeta failed for {filePath}: {ex.Message}");
+            }
 
             return meta;
         });
