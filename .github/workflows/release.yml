@@ -130,8 +130,19 @@ jobs:
           & $signtool sign /fd SHA256 /p "${{ secrets.WINDOWS_CERT_PASSWORD }}" /f $pfx `
             "MetaEnricher-${{ github.ref_name }}-x64.msix"
 
-      # ── GitHub Release ────────────────────────────────────────────────────────
+      # ── Artifacts (always — downloadable from workflow run page) ──────────────
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: MetaEnricher-${{ github.ref_name }}
+          path: |
+            MetaEnricher-${{ github.ref_name }}-portable-x64.zip
+            MetaEnricher-${{ github.ref_name }}-x64.msix
+          if-no-files-found: error
+
+      # ── GitHub Release (only on tag push) ─────────────────────────────────────
       - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           draft: true
