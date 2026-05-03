@@ -2,84 +2,81 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Commands
+## Project structure
 
-```bash
-npm run dev    # Run with TypeScript watch mode (development)
-npm start      # Run without watch mode
+```
+Meta enricher/
+├── macOS/      ← Native macOS app (Swift/SwiftUI), primary version
+├── Windows/    ← Future Windows version (not yet created)
 ```
 
-No build step required — `tsx` handles TypeScript compilation at runtime. Output compiles to `dist/` if needed via `tsc`.
+---
 
-No test runner or linter is configured in this project.
+## macOS app (`macOS/MetaEnricher/`)
 
-## Environment Setup
+Built with Swift + SwiftUI using `@Observable`. Targets macOS 26+. No external dependencies — uses only system frameworks (SwiftUI, ImageIO, UniformTypeIdentifiers).
 
-Copy `.env.example` to `.env` and configure:
-- `OLLAMA_URL` — Ollama API base URL (default: `http://localhost:11434`)
-- `OLLAMA_MODEL` — Vision model name (e.g., `qwen2.5-vl`)
-- `CAMERA_ROOT` — Absolute path to photo library root
-- `PORT` — HTTP server port (default: 3000)
+### Commands
 
-Requires Ollama running locally with a vision model installed.
+```bash
+open macOS/MetaEnricher/MetaEnricher.xcodeproj   # Open in Xcode
+# ⌘R — Build and run
+# ⌘U — Run tests (unit + UI)
+# ⌘B — Build only
+```
 
-## Architecture
+**Prerequisites:**
+```bash
+ollama serve                    # Ollama must be running locally
+ollama pull qwen2.5vl           # Pull the default vision model
+```
 
-Single-process Node.js HTTP server (Hono) with a plain JS frontend. No database — all state is on the filesystem.
+### Architecture
 
-### Module responsibilities
+| Layer | Files | Purpose |
+|-------|-------|---------|
+| App entry | `App.swift` | Routes between `OnboardingView` and `ContentView` based on `hasCompletedOnboarding` |
+| State | `Models/AppState.swift` | Single `@Observable` source of truth; holds sessions, photos, UI state, settings |
+| Models | `Models/Photo.swift` | `Photo` and `PhotoSession` value types |
+| Services | `Services/` | Stateless actors/classes: `PhotoScanner`, `OllamaService`, `ExifService`, `GeocodingService`, `ImportService`, `ThumbnailService` |
+| Views | `Views/` | SwiftUI views; inject `AppState` via `@Environment` |
 
-| File | Purpose |
-|------|---------|
-| `src/server.ts` | Hono HTTP server, all ~20 API routes |
-| `src/photos.ts` | Session/photo discovery, path encoding |
-| `src/exif.ts` | EXIF/XMP read/write via exiftool-vendored |
-| `src/cache.ts` | Image resize cache (Sharp) + AI result cache |
-| `src/ollama.ts` | Vision AI enrichment via local Ollama API |
-| `src/location.ts` | Reverse geocoding via OSM Nominatim |
-| `src/import.ts` | SD card import with async generator progress streaming |
-| `public/app.js` | All frontend logic (no framework) |
+**Sandbox & file access**: The app is sandboxed (`com.apple.security.app-sandbox`). User-selected folders are persisted via security-scoped bookmarks (`AppState.saveBookmark` / `restoreBookmark`) — never plain paths.
 
-### Photo library structure
+**AI enrichment flow**: `OllamaService` resizes photo (max 1280px) → base64 JPEG (85%) → POST to Ollama `/api/generate` with JSON format → `ExifService` writes IPTC/XMP/TIFF tags via native `CGImageMetadata` (lossless). Location priority: embedded GPS → reverse geocode (Nominatim) → AI guess.
+
+**Metadata tags written** (via `ExifService.writeMeta`):
+- IPTC: ObjectName, CaptionAbstract, Keywords, City, CountryPrimaryLocationName, Byline, Copyright
+- XMP DC: title, description, subject, creator, rights
+- TIFF: Artist, Copyright, Orientation
+- GPS: Latitude/Longitude with N/S/E/W refs
+
+**Onboarding**: Multi-step wizard in `OnboardingView`. Supports two library schemas — `metaEnricher` (fixed subfolder names) and `custom` (user-defined subfolder name).
+
+### Photo library structure (metaEnricher schema)
 
 ```
 CAMERA_ROOT/
   <year>/
-    <date>/           ← "session"
-      Edited export/  ← edited JPEGs; this is what the UI browses
-      JPEG/           ← original JPEGs
-      RAW/            ← original RAW files
+    <date> [label]/    ← "session"
+      Edited export/   ← edited JPEGs (what the UI browses)
+      JPEG/
+      RAW/
 ```
 
-Sessions are discovered by scanning for `Edited export` folders. The date folder can have a label suffix (e.g., `2024-07-04 Fireworks`).
+### Configuration
 
-### Path encoding
+All settings via UI + UserDefaults (no env vars):
 
-All file paths in API routes are Base64URL-encoded (`encodeFolderPath` / `decodeFolderPath` in `photos.ts`) to safely pass filesystem paths through HTTP URLs.
+| Setting | Default | UserDefaults key |
+|---------|---------|------------------|
+| Ollama URL | `http://localhost:11434` | `ollamaURL` |
+| Ollama Model | `qwen2.5vl` | `ollamaModel` |
+| Camera root | _(user selects)_ | `cameraRootBookmark` (security-scoped) |
 
-### Caching
+### Troubleshooting
 
-`.cache/` holds:
-- Resized image thumbnails (400px) and previews (1200px), keyed by MD5(filePath + size + mtime)
-- AI enrichment JSON per photo, invalidated on file mtime change
-- Session notes JSON per session
-
-### AI enrichment flow
-
-1. Resize photo to ≤1280px, encode as base64
-2. POST to Ollama with vision prompt (title, description, keywords, location)
-3. Parse JSON from response (strip markdown fences)
-4. Location priority: user GPS → reverse geocode via Nominatim → AI guess
-5. Cache result; invalidate on file modification
-
-### Metadata writing
-
-`exif.ts` writes to multiple tag targets (IPTC, XMP, legacy) for cross-tool compatibility. Keywords are deduplicated before writing. Source tracking (`"gps"` vs `"ai"`) is stored in metadata.
-
-### Real-time updates
-
-`GET /api/watch` is a Server-Sent Events stream that fires when the photo library folder changes (debounced 2s), used by the frontend to refresh session lists.
-
-### SD card import
-
-`import.ts` scans drive letters D–L for DCIM folders. Import yields progress events as NDJSON via a streaming HTTP response. Creates the full folder structure including `Edited export/` on import.
+- **Ollama not connecting**: Check `ollama serve` is running. App uses `com.apple.security.network.client` entitlement for localhost access. Timeout: 120s request, 300s resource.
+- **EXIF write fails**: `ExifService` writes to temp file then atomic replace via `FileManager.replaceItemAt()`. If folder is read-only, the write will fail silently. Check folder permissions.
+- **Sandbox bookmark stale**: If camera root stops working after macOS update, re-select the folder via Settings. Stale bookmarks are auto-detected on resolve.
+- **exiftool fallback**: Batch metadata reads use exiftool at `/opt/homebrew/bin/exiftool` or `/usr/local/bin/exiftool`. Install via `brew install exiftool` if missing.

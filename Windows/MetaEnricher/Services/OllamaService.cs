@@ -1,0 +1,352 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Net.Http;
+using System.Runtime.InteropServices.WindowsRuntime;
+using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using System.Threading.Tasks;
+using MetaEnricher.Models;
+using Windows.Graphics.Imaging;
+using Windows.Storage;
+using Windows.Storage.Streams;
+
+namespace MetaEnricher.Services;
+
+public record PullProgress(string Status, long Total, long Completed)
+{
+    public double Fraction => Total > 0 ? (double)Completed / Total : -1;
+    public bool IsDone => Status == "success";
+}
+
+public class OllamaService
+{
+    private static OllamaService? _instance;
+    public static OllamaService Instance => _instance ??= new OllamaService();
+
+    private readonly HttpClient _http;
+
+    public OllamaService()
+    {
+        _http = new HttpClient { Timeout = TimeSpan.FromSeconds(AppConstants.OllamaRequestTimeoutSec) };
+        _http.DefaultRequestHeaders.Add("User-Agent", "MetaEnricher/1.0");
+    }
+
+    private void ApplyAuth(System.Net.Http.Headers.HttpRequestHeaders headers, string apiKey)
+    {
+        headers.Remove("Authorization");
+        if (!string.IsNullOrWhiteSpace(apiKey))
+            headers.Add("Authorization", $"Bearer {apiKey}");
+    }
+
+    public async Task<bool> CheckOllamaAsync(string baseUrl, string apiKey = "")
+    {
+        try
+        {
+            var req = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl.TrimEnd('/')}/api/tags");
+            ApplyAuth(req.Headers, apiKey);
+            var resp = await _http.SendAsync(req);
+            return resp.IsSuccessStatusCode;
+        }
+        catch { return false; }
+    }
+
+    public async Task<List<string>> ListModelsAsync(string baseUrl, string apiKey = "")
+    {
+        try
+        {
+            var req = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl.TrimEnd('/')}/api/tags");
+            ApplyAuth(req.Headers, apiKey);
+            var resp = await _http.SendAsync(req);
+            var respStr = await resp.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(respStr);
+            var models = new List<string>();
+            if (doc.RootElement.TryGetProperty("models", out var arr))
+            {
+                foreach (var m in arr.EnumerateArray())
+                {
+                    if (m.TryGetProperty("name", out var name))
+                        models.Add(name.GetString() ?? "");
+                }
+            }
+            models.Sort();
+            return models;
+        }
+        catch { return new List<string>(); }
+    }
+
+    public async Task<bool> UnloadModelAsync(string model, string baseUrl, string apiKey)
+    {
+        try
+        {
+            var body = JsonSerializer.Serialize(new { model, keep_alive = 0 });
+            var req = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl.TrimEnd('/')}/api/generate")
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json")
+            };
+            ApplyAuth(req.Headers, apiKey);
+            var resp = await _http.SendAsync(req);
+            return resp.IsSuccessStatusCode;
+        }
+        catch { return false; }
+    }
+
+    public async Task PullModelAsync(string name, string baseUrl, string apiKey, IProgress<PullProgress> progress)
+    {
+        var body = JsonSerializer.Serialize(new { name, stream = true });
+        var req = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl.TrimEnd('/')}/api/pull")
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json")
+        };
+        ApplyAuth(req.Headers, apiKey);
+
+        using var resp = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead);
+        resp.EnsureSuccessStatusCode();
+
+        using var stream = await resp.Content.ReadAsStreamAsync();
+        using var reader = new StreamReader(stream);
+
+        while (!reader.EndOfStream)
+        {
+            var line = await reader.ReadLineAsync();
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            try
+            {
+                using var doc = JsonDocument.Parse(line);
+                var status = doc.RootElement.TryGetProperty("status", out var s) ? s.GetString() ?? "" : "";
+                long total = doc.RootElement.TryGetProperty("total", out var t) ? t.GetInt64() : 0;
+                long completed = doc.RootElement.TryGetProperty("completed", out var c) ? c.GetInt64() : 0;
+                progress.Report(new PullProgress(status, total, completed));
+                if (status == "success") break;
+            }
+            catch { }
+        }
+    }
+
+    public async Task<PhotoMeta> EnrichPhotoAsync(
+        string imagePath,
+        string baseUrl,
+        string model,
+        string apiKey,
+        string sessionNotes,
+        PhotoMeta existingMeta,
+        HashSet<EnrichField> fields)
+    {
+        if (string.IsNullOrWhiteSpace(model))
+            throw new ArgumentException("Ollama model is not configured. Open Settings and select a model.", nameof(model));
+        if (string.IsNullOrWhiteSpace(baseUrl))
+            throw new ArgumentException("Ollama URL is not configured.", nameof(baseUrl));
+
+        // Resize and encode image
+        var imageBytes = await ResizeAndEncodeAsync(imagePath, 1280);
+        var base64 = Convert.ToBase64String(imageBytes);
+
+        // Build prompt
+        var prompt = BuildPrompt(sessionNotes, existingMeta, fields);
+
+        // Call Ollama
+        var requestBody = new
+        {
+            model,
+            prompt,
+            images = new[] { base64 },
+            stream = false,
+            format = "json",
+            options = new { think = false }
+        };
+
+        var json = JsonSerializer.Serialize(requestBody);
+        using var cts = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(AppConstants.OllamaInferenceTimeoutSec));
+        var req = new HttpRequestMessage(HttpMethod.Post, $"{baseUrl.TrimEnd('/')}/api/generate")
+        {
+            Content = new StringContent(json, Encoding.UTF8, "application/json")
+        };
+        ApplyAuth(req.Headers, apiKey);
+        var resp = await _http.SendAsync(req, cts.Token);
+        resp.EnsureSuccessStatusCode();
+
+        var responseText = await resp.Content.ReadAsStringAsync();
+        System.Diagnostics.Debug.WriteLine($"[Ollama] Full API response ({responseText.Length} chars): {responseText.Substring(0, Math.Min(800, responseText.Length))}");
+        using var doc = JsonDocument.Parse(responseText);
+        var responseContent = doc.RootElement.TryGetProperty("response", out var r) ? r.GetString() ?? "" : "";
+
+        // qwen3-vl and other thinking models put the JSON in "thinking" when response is empty
+        if (string.IsNullOrWhiteSpace(responseContent) &&
+            doc.RootElement.TryGetProperty("thinking", out var t))
+            responseContent = t.GetString() ?? "";
+
+        System.Diagnostics.Debug.WriteLine($"[Ollama] Extracted content ({responseContent.Length} chars): {responseContent.Substring(0, Math.Min(500, responseContent.Length))}");
+
+        return ParseResponse(responseContent, existingMeta, fields);
+    }
+
+    private string BuildPrompt(string sessionNotes, PhotoMeta existingMeta, HashSet<EnrichField> fields)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("Analyze this photo and respond ONLY with a JSON object (no markdown fences, no extra text).");
+
+        if (!string.IsNullOrWhiteSpace(sessionNotes))
+            sb.AppendLine($"Context: {sessionNotes}");
+
+        // Include existing metadata for fields NOT being regenerated
+        var contextParts = new List<string>();
+        if (!fields.Contains(EnrichField.Title) && existingMeta.Title != null)
+            contextParts.Add($"existing title: \"{existingMeta.Title}\"");
+        if (!fields.Contains(EnrichField.Description) && existingMeta.Description != null)
+            contextParts.Add($"existing description: \"{existingMeta.Description}\"");
+        if (!fields.Contains(EnrichField.Keywords) && existingMeta.Keywords.Count > 0)
+            contextParts.Add($"existing keywords: {string.Join(", ", existingMeta.Keywords)}");
+        if (!fields.Contains(EnrichField.Location) && existingMeta.Location != null)
+            contextParts.Add($"existing location: \"{existingMeta.Location}\"");
+
+        if (contextParts.Count > 0)
+            sb.AppendLine($"Known metadata — {string.Join("; ", contextParts)}");
+
+        sb.AppendLine();
+        sb.AppendLine("Respond with exactly this structure:");
+        sb.AppendLine("{ \"title\": \"...\", \"description\": \"...\", \"keywords\": [...], \"city\": \"...\", \"country\": \"...\" }");
+        sb.AppendLine();
+        sb.AppendLine("Rules:");
+        sb.AppendLine("- title: concise, evocative, max 80 chars");
+        sb.AppendLine("- description: describe subject, mood, composition");
+        sb.AppendLine("- keywords: 5-10 relevant tags as JSON array");
+        sb.AppendLine("- city/country: best guess from visual cues, null if uncertain");
+
+        return sb.ToString();
+    }
+
+    private PhotoMeta ParseResponse(string responseText, PhotoMeta existingMeta, HashSet<EnrichField> fields)
+    {
+        // Strip <think>...</think> blocks
+        responseText = Regex.Replace(responseText, @"<think>.*?</think>", "", RegexOptions.Singleline);
+
+        // Strip markdown fences
+        responseText = Regex.Replace(responseText, @"```[a-z]*\n?", "");
+
+        // Extract {} bounds
+        var start = responseText.IndexOf('{');
+        var end = responseText.LastIndexOf('}');
+        if (start >= 0 && end > start)
+            responseText = responseText[start..(end + 1)];
+
+        var meta = new PhotoMeta
+        {
+            Title = existingMeta.Title,
+            Description = existingMeta.Description,
+            Keywords = new List<string>(existingMeta.Keywords),
+            Location = existingMeta.Location,
+            LocationSource = existingMeta.LocationSource,
+            DateTimeOriginal = existingMeta.DateTimeOriginal,
+            Make = existingMeta.Make,
+            Model = existingMeta.Model,
+            FocalLength = existingMeta.FocalLength,
+            Aperture = existingMeta.Aperture,
+            ShutterSpeed = existingMeta.ShutterSpeed,
+            Iso = existingMeta.Iso,
+            Rating = existingMeta.Rating,
+            Creator = existingMeta.Creator,
+            Copyright = existingMeta.Copyright,
+            GpsLat = existingMeta.GpsLat,
+            GpsLon = existingMeta.GpsLon,
+        };
+
+        try
+        {
+            using var doc = JsonDocument.Parse(responseText);
+            var root = doc.RootElement;
+
+            if (fields.Contains(EnrichField.Title) && root.TryGetProperty("title", out var title))
+                meta.Title = NullIfEmpty(title.GetString());
+
+            if (fields.Contains(EnrichField.Description) && root.TryGetProperty("description", out var desc))
+                meta.Description = NullIfEmpty(desc.GetString());
+
+            if (fields.Contains(EnrichField.Keywords) && root.TryGetProperty("keywords", out var kws))
+            {
+                meta.Keywords = new List<string>();
+                foreach (var kw in kws.EnumerateArray())
+                {
+                    var s = kw.GetString();
+                    if (!string.IsNullOrWhiteSpace(s))
+                        meta.Keywords.Add(s);
+                }
+            }
+
+            if (fields.Contains(EnrichField.Location))
+            {
+                string? city = null, country = null;
+                if (root.TryGetProperty("city", out var c) && c.ValueKind != JsonValueKind.Null)
+                    city = c.GetString();
+                if (root.TryGetProperty("country", out var co) && co.ValueKind != JsonValueKind.Null)
+                    country = co.GetString();
+
+                var parts = new List<string>();
+                if (!string.IsNullOrWhiteSpace(city)) parts.Add(city!);
+                if (!string.IsNullOrWhiteSpace(country)) parts.Add(country!);
+                if (parts.Count > 0)
+                {
+                    meta.Location = string.Join(", ", parts);
+                    meta.LocationSource = "ai";
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Ollama] ParseResponse failed: {ex.Message}");
+            System.Diagnostics.Debug.WriteLine($"[Ollama] Attempted to parse: {responseText.Substring(0, Math.Min(300, responseText.Length))}");
+        }
+
+        return meta;
+    }
+
+    private static string? NullIfEmpty(string? s) =>
+        string.IsNullOrWhiteSpace(s) ? null : s;
+
+    private static async Task<byte[]> ResizeAndEncodeAsync(string filePath, int maxSize)
+    {
+        try
+        {
+            var file = await StorageFile.GetFileFromPathAsync(filePath);
+            using var stream = await file.OpenReadAsync();
+            var decoder = await BitmapDecoder.CreateAsync(stream);
+
+            double scale = Math.Min((double)maxSize / decoder.PixelWidth, (double)maxSize / decoder.PixelHeight);
+            if (scale > 1) scale = 1;
+
+            var transform = new BitmapTransform
+            {
+                ScaledWidth = (uint)(decoder.PixelWidth * scale),
+                ScaledHeight = (uint)(decoder.PixelHeight * scale),
+                InterpolationMode = BitmapInterpolationMode.Fant
+            };
+
+            using var bitmapData = await decoder.GetSoftwareBitmapAsync(
+                BitmapPixelFormat.Bgra8,
+                BitmapAlphaMode.Premultiplied,
+                transform,
+                ExifOrientationMode.RespectExifOrientation,
+                ColorManagementMode.ColorManageToSRgb);
+
+            using var outStream = new InMemoryRandomAccessStream();
+            var propertySet = new BitmapPropertySet
+            {
+                { "ImageQuality", new BitmapTypedValue(0.85, Windows.Foundation.PropertyType.Single) }
+            };
+            var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.JpegEncoderId, outStream, propertySet);
+            encoder.SetSoftwareBitmap(bitmapData);
+            await encoder.FlushAsync();
+
+            outStream.Seek(0);
+            var bytes = new byte[outStream.Size];
+            await outStream.ReadAsync(bytes.AsBuffer(), (uint)outStream.Size, InputStreamOptions.None);
+            return bytes;
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[Ollama] ResizeAndEncode failed for {filePath}: {ex.Message} — falling back to raw bytes");
+            return await File.ReadAllBytesAsync(filePath);
+        }
+    }
+}

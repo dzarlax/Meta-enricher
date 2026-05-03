@@ -4,3 +4,16 @@ dist/
 .env
 release/
 .DS_Store
+
+# Windows app build artifacts
+**/bin/
+**/obj/
+*.csproj.user
+*.wapproj.user
+*.assets.cache
+*.pfx
+Windows/MetaEnricher/AppPackages/
+Windows/MetaEnricher/Assets/StoreLogo.backup.png
+
+# Claude Code personal memory
+.claude/
