@@ -11,6 +11,8 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: write
+    env:
+      HAS_CERT: ${{ secrets.WINDOWS_CERT != '' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -80,7 +82,7 @@ jobs:
       #   WINDOWS_CERT  — base64-encoded .pfx file
       #   WINDOWS_CERT_PASSWORD — pfx password
       - name: Sign MSIX
-        if: ${{ secrets.WINDOWS_CERT != '' }}
+        if: env.HAS_CERT == 'true'
         shell: pwsh
         run: |
           $pfx = "$env:TEMP\sign.pfx"
