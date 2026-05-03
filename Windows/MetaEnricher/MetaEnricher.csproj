@@ -24,6 +24,16 @@
     <GenerateAppxPackageOnBuild Condition="'$(Configuration)' == 'Release'">true</GenerateAppxPackageOnBuild>
     <AppxPackageSigningEnabled Condition="'$(Configuration)' == 'Release'">false</AppxPackageSigningEnabled>
     <UapAppxPackageBuildMode Condition="'$(Configuration)' == 'Release'">StoreUpload</UapAppxPackageBuildMode>
+    <!-- Portable distribution: drop non-English satellite resources, then bundle
+         everything (managed + native + content) into a single self-extracting .exe.
+         WindowsAppSDK requires IncludeAllContentForSelfExtract=true and
+         EnableMsixTooling=true with PublishSingleFile, otherwise it errors out. -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <PublishSingleFile Condition="'$(Configuration)' == 'Release'">true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract Condition="'$(Configuration)' == 'Release'">true</IncludeNativeLibrariesForSelfExtract>
+    <IncludeAllContentForSelfExtract Condition="'$(Configuration)' == 'Release'">true</IncludeAllContentForSelfExtract>
+    <EnableCompressionInSingleFile Condition="'$(Configuration)' == 'Release'">true</EnableCompressionInSingleFile>
+    <EnableMsixTooling Condition="'$(Configuration)' == 'Release'">true</EnableMsixTooling>
   </PropertyGroup>
   <!-- exiftool.exe must be placed next to this .csproj file.
        Download the Windows standalone from https://exiftool.org
