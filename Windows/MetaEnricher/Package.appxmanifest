@@ -9,7 +9,7 @@
   <Identity
     Name="Dzarlax.MetaEnricher"
     Publisher="CN=C1047A08-2882-4611-85C9-52BB88270CC2"
-    Version="1.0.2.0" />
+    Version="1.0.3.0" />
 
   <mp:PhoneIdentity
     PhoneProductId="00000000-0000-0000-0000-000000000000"
