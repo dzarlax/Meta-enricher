@@ -26,7 +26,7 @@ You choose where the AI runs: **locally on your machine** for full privacy, or *
 
 ## How it works
 
-1. **Import from SD card** — MetaEnricher scans your memory card, copies files to your library, and organizes them automatically by date into the right folder structure
+1. **Import your photos** — bring photos in from an SD card / camera (auto-detected via DCIM) or from any folder already on your PC; files are copied to your library and organized automatically by date
 2. **Review your sessions** — each shooting day appears as a session in the sidebar; browse your edited exports
 3. **Enrich with AI** — one click sends photos to a vision AI model, which generates title, description, keywords, and location for each image
 4. **Metadata is written to the files** — EXIF, IPTC, and XMP tags are saved directly into your JPEGs, ready for Lightroom, stock platforms, or wherever you publish
@@ -41,7 +41,7 @@ You choose where the AI runs: **locally on your machine** for full privacy, or *
 - **EXIF / IPTC / XMP writing** — metadata written directly to files, compatible with Lightroom, Capture One, Photo Mechanic, and stock platforms
 - **Smart location** — GPS coordinates reverse-geocoded via OpenStreetMap; AI fills in location when GPS is absent; session notes provide extra context
 - **Bulk enrichment** — enrich one photo or an entire session in one click
-- **SD card import** — scans for DCIM folders and organizes files into the correct library structure on import
+- **Flexible import** — pull photos from an SD card, camera, or phone via DCIM auto-detect, or point at any folder already on your PC, network share, or mounted device
 
 ---
 
