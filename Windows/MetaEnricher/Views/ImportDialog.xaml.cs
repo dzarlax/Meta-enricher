@@ -92,6 +92,12 @@ public sealed partial class ImportDialog : ContentDialog
         _customSourcePath = folder.Path;
         TbFolderPath.Text = _customSourcePath;
 
+        // Now that a folder is picked, Scan is the next action — promote it
+        // to accent, demote the picker to a secondary affordance.
+        BtnBrowseSource.Style = (Style)Application.Current.Resources["OutlineButtonStyle"];
+        BtnScanFolder.Style  = (Style)Application.Current.Resources["AccentButtonStyle"];
+        BtnScanFolder.IsEnabled = true;
+
         // Reset prior scan results
         ScanSummaryPanel.Visibility = Visibility.Collapsed;
         BtnImport.IsEnabled = false;
